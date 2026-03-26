@@ -1,0 +1,68 @@
+{
+  "name": "prev-next-revision",
+  "displayName": "Previous/Next Revision",
+  "description": "Navigate between file revisions with editor title bar arrows",
+  "version": "0.0.1",
+  "publisher": "danieledep",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "prevNextRevision.previousRevision",
+        "title": "Open Changes with Previous Revision",
+        "icon": "$(arrow-left)",
+        "category": "Revision"
+      },
+      {
+        "command": "prevNextRevision.showCommit",
+        "title": "Show Revision Commit",
+        "icon": "$(git-commit)",
+        "category": "Revision"
+      },
+      {
+        "command": "prevNextRevision.nextRevision",
+        "title": "Open Changes with Next Revision",
+        "icon": "$(arrow-right)",
+        "category": "Revision"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "prevNextRevision.previousRevision",
+          "group": "navigation",
+          "when": "prevNextRevision.canNavigate"
+        },
+        {
+          "command": "prevNextRevision.showCommit",
+          "group": "navigation",
+          "when": "prevNextRevision.canNavigate"
+        },
+        {
+          "command": "prevNextRevision.nextRevision",
+          "group": "navigation",
+          "when": "prevNextRevision.canNavigate"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.74.0",
+    "typescript": "^5.3.0"
+  }
+}
