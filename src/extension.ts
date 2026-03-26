@@ -10,31 +10,41 @@ let currentCommits: CommitInfo[] = [];
 let currentIndex = -1;
 let currentFilePath = "";
 
+function setContext(key: string, value: boolean) {
+  vscode.commands.executeCommand("setContext", key, value);
+}
+
+function updateNavigationState() {
+  const hasHistory = currentCommits.length > 0;
+
+  // hasPrevious: there's an older commit to diff against
+  const prevIndex = currentIndex === -1 ? 0 : currentIndex + 1;
+  const hasPrevious = hasHistory && prevIndex < currentCommits.length;
+
+  // hasNext: we're viewing a revision and there's a newer one (or working copy)
+  const hasNext = hasHistory && currentIndex >= 0;
+
+  setContext("prevNextRevision.canNavigate", hasHistory);
+  setContext("prevNextRevision.hasPrevious", hasPrevious);
+  setContext("prevNextRevision.hasNext", hasNext);
+}
+
 async function updateContext(editor: vscode.TextEditor | undefined) {
   if (!editor) {
     currentCommits = [];
     currentIndex = -1;
     currentFilePath = "";
-    await vscode.commands.executeCommand(
-      "setContext",
-      "prevNextRevision.canNavigate",
-      false
-    );
+    updateNavigationState();
     return;
   }
 
   const uri = editor.document.uri;
 
-  // Only work with file and git scheme URIs
   if (uri.scheme !== "file" && uri.scheme !== "git") {
     currentCommits = [];
     currentIndex = -1;
     currentFilePath = "";
-    await vscode.commands.executeCommand(
-      "setContext",
-      "prevNextRevision.canNavigate",
-      false
-    );
+    updateNavigationState();
     return;
   }
 
@@ -46,46 +56,32 @@ async function updateContext(editor: vscode.TextEditor | undefined) {
       currentCommits = [];
       currentIndex = -1;
       currentFilePath = "";
-      await vscode.commands.executeCommand(
-        "setContext",
-        "prevNextRevision.canNavigate",
-        false
-      );
+      updateNavigationState();
       return;
     }
 
     currentCommits = commits;
     currentFilePath = filePath;
 
-    // Determine current index based on commit hash from URI
     const commitHash = getCommitFromUri(uri);
     if (commitHash) {
       currentIndex = commits.findIndex((c) =>
         c.hash.startsWith(commitHash)
       );
       if (currentIndex === -1) {
-        // Commit not found, default to working copy (before index 0)
         currentIndex = -1;
       }
     } else {
-      // Working copy — before the latest commit
+      // Working copy
       currentIndex = -1;
     }
 
-    await vscode.commands.executeCommand(
-      "setContext",
-      "prevNextRevision.canNavigate",
-      true
-    );
+    updateNavigationState();
   } catch {
     currentCommits = [];
     currentIndex = -1;
     currentFilePath = "";
-    await vscode.commands.executeCommand(
-      "setContext",
-      "prevNextRevision.canNavigate",
-      false
-    );
+    updateNavigationState();
   }
 }
 
@@ -103,38 +99,41 @@ async function openDiffWithPrevious() {
 
   // currentIndex: -1 = working copy, 0 = latest commit, etc.
   // "previous" means going to an older commit
-  const prevIndex =
-    currentIndex === -1 ? 0 : currentIndex + 1;
+  const prevIndex = currentIndex === -1 ? 0 : currentIndex + 1;
 
   if (prevIndex >= currentCommits.length) {
-    vscode.window.showInformationMessage("No previous revision available.");
     return;
   }
 
   const prevCommit = currentCommits[prevIndex];
-  const currentLabel =
-    currentIndex === -1
-      ? "Working Copy"
-      : currentCommits[currentIndex].hash.substring(0, 7);
 
-  const leftUri = makeGitUri(currentFilePath, prevCommit.hash);
-  const rightUri =
-    currentIndex === -1
-      ? vscode.Uri.file(currentFilePath)
-      : makeGitUri(currentFilePath, currentCommits[currentIndex].hash);
+  // Always diff between two contiguous commits
+  // Left = older (prevIndex), Right = newer (prevIndex - 1), or working copy if prevIndex == 0 and currentIndex == -1
+  let leftUri: vscode.Uri;
+  let rightUri: vscode.Uri;
+  let currentLabel: string;
+
+  if (prevIndex + 1 < currentCommits.length) {
+    // There's an even older commit — left side is prevCommit's parent in our log
+    leftUri = makeGitUri(currentFilePath, currentCommits[prevIndex + 1].hash);
+  } else {
+    // This is the oldest commit — diff against empty
+    leftUri = makeGitUri(currentFilePath, prevCommit.hash + "~1");
+  }
+  rightUri = makeGitUri(currentFilePath, prevCommit.hash);
+  currentLabel = prevCommit.hash.substring(0, 7);
 
   const fileName = currentFilePath.split("/").pop() || currentFilePath;
   await vscode.commands.executeCommand(
     "vscode.diff",
     leftUri,
     rightUri,
-    `${fileName} (${prevCommit.hash.substring(0, 7)} ↔ ${currentLabel})`
+    `${fileName} (${prevCommit.hash.substring(0, 7)} — ${prevCommit.subject})`
   );
 }
 
 async function openDiffWithNext() {
-  if (currentCommits.length === 0 || currentIndex === -1) {
-    vscode.window.showInformationMessage("No next revision available.");
+  if (currentCommits.length === 0 || currentIndex < 0) {
     return;
   }
 
@@ -160,33 +159,8 @@ async function openDiffWithNext() {
       "vscode.diff",
       leftUri,
       rightUri,
-      `${fileName} (${currentCommit.hash.substring(0, 7)} ↔ ${nextCommit.hash.substring(0, 7)})`
+      `${fileName} (${nextCommit.hash.substring(0, 7)} — ${nextCommit.subject})`
     );
-  }
-}
-
-async function showCommit() {
-  if (currentCommits.length === 0) {
-    return;
-  }
-
-  const commit =
-    currentIndex === -1 ? currentCommits[0] : currentCommits[currentIndex];
-  const label =
-    currentIndex === -1 ? "Latest commit" : "Current revision";
-
-  const action = await vscode.window.showInformationMessage(
-    `${label}: ${commit.hash.substring(0, 7)} — ${commit.subject}`,
-    "Copy SHA",
-    "Show in Terminal"
-  );
-
-  if (action === "Copy SHA") {
-    await vscode.env.clipboard.writeText(commit.hash);
-  } else if (action === "Show in Terminal") {
-    const terminal = vscode.window.createTerminal("Git Show");
-    terminal.show();
-    terminal.sendText(`git show ${commit.hash}`);
   }
 }
 
@@ -200,14 +174,9 @@ export function activate(context: vscode.ExtensionContext) {
       "prevNextRevision.nextRevision",
       openDiffWithNext
     ),
-    vscode.commands.registerCommand(
-      "prevNextRevision.showCommit",
-      showCommit
-    ),
     vscode.window.onDidChangeActiveTextEditor(updateContext)
   );
 
-  // Set initial context
   updateContext(vscode.window.activeTextEditor);
 }
 

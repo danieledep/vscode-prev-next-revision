@@ -19,20 +19,22 @@
       {
         "command": "prevNextRevision.previousRevision",
         "title": "Open Changes with Previous Revision",
-        "icon": "$(arrow-left)",
-        "category": "Revision"
-      },
-      {
-        "command": "prevNextRevision.showCommit",
-        "title": "Show Revision Commit",
-        "icon": "$(git-commit)",
-        "category": "Revision"
+        "icon": {
+          "light": "images/light/icon-prev-commit.svg",
+          "dark": "images/dark/icon-prev-commit.svg"
+        },
+        "category": "Revision",
+        "enablement": "prevNextRevision.hasPrevious"
       },
       {
         "command": "prevNextRevision.nextRevision",
         "title": "Open Changes with Next Revision",
-        "icon": "$(arrow-right)",
-        "category": "Revision"
+        "icon": {
+          "light": "images/light/icon-next-commit.svg",
+          "dark": "images/dark/icon-next-commit.svg"
+        },
+        "category": "Revision",
+        "enablement": "prevNextRevision.hasNext"
       }
     ],
     "menus": {
@@ -43,15 +45,9 @@
           "when": "prevNextRevision.canNavigate"
         },
         {
-          "command": "prevNextRevision.showCommit",
-          "group": "navigation@98",
-          "when": "prevNextRevision.canNavigate"
-        },
-        {
           "command": "prevNextRevision.nextRevision",
           "group": "navigation@99",
-          "when": "prevNextRevision.canNavigate && resourceScheme =~ /^git$/",
-          "enablement": "resourceScheme =~ /^git$/"
+          "when": "prevNextRevision.canNavigate"
         }
       ]
     }
