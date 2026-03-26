@@ -170,19 +170,24 @@ async function showCommit() {
     return;
   }
 
-  if (currentIndex === -1) {
-    // Working copy — show the latest commit
-    const commit = currentCommits[0];
+  const commit =
+    currentIndex === -1 ? currentCommits[0] : currentCommits[currentIndex];
+  const label =
+    currentIndex === -1 ? "Latest commit" : "Current revision";
+
+  const action = await vscode.window.showInformationMessage(
+    `${label}: ${commit.hash.substring(0, 7)} — ${commit.subject}`,
+    "Copy SHA",
+    "Show in Terminal"
+  );
+
+  if (action === "Copy SHA") {
+    await vscode.env.clipboard.writeText(commit.hash);
+  } else if (action === "Show in Terminal") {
     const terminal = vscode.window.createTerminal("Git Show");
     terminal.show();
     terminal.sendText(`git show ${commit.hash}`);
-    return;
   }
-
-  const commit = currentCommits[currentIndex];
-  const terminal = vscode.window.createTerminal("Git Show");
-  terminal.show();
-  terminal.sendText(`git show ${commit.hash}`);
 }
 
 export function activate(context: vscode.ExtensionContext) {

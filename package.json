@@ -39,18 +39,19 @@
       "editor/title": [
         {
           "command": "prevNextRevision.previousRevision",
-          "group": "navigation",
+          "group": "navigation@97",
           "when": "prevNextRevision.canNavigate"
         },
         {
           "command": "prevNextRevision.showCommit",
-          "group": "navigation",
+          "group": "navigation@98",
           "when": "prevNextRevision.canNavigate"
         },
         {
           "command": "prevNextRevision.nextRevision",
-          "group": "navigation",
-          "when": "prevNextRevision.canNavigate"
+          "group": "navigation@99",
+          "when": "prevNextRevision.canNavigate && resourceScheme =~ /^git$/",
+          "enablement": "resourceScheme =~ /^git$/"
         }
       ]
     }
