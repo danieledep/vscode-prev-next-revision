@@ -19,14 +19,20 @@
       {
         "command": "prevNextRevision.previousRevision",
         "title": "Open Changes with Previous Revision",
-        "icon": "images/icon-prev-commit.svg",
+        "icon": {
+          "light": "images/light/icon-prev-commit.svg",
+          "dark": "images/dark/icon-prev-commit.svg"
+        },
         "category": "Revision",
         "enablement": "prevNextRevision.hasPrevious"
       },
       {
         "command": "prevNextRevision.nextRevision",
         "title": "Open Changes with Next Revision",
-        "icon": "images/icon-next-commit.svg",
+        "icon": {
+          "light": "images/light/icon-next-commit.svg",
+          "dark": "images/dark/icon-next-commit.svg"
+        },
         "category": "Revision",
         "enablement": "prevNextRevision.hasNext"
       }
