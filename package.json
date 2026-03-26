@@ -27,6 +27,16 @@
         "enablement": "prevNextRevision.hasPrevious"
       },
       {
+        "command": "prevNextRevision.showCommit",
+        "title": "Show Revision Commit",
+        "icon": {
+          "light": "images/light/icon-commit.svg",
+          "dark": "images/dark/icon-commit.svg"
+        },
+        "category": "Revision",
+        "enablement": "prevNextRevision.hasCommit"
+      },
+      {
         "command": "prevNextRevision.nextRevision",
         "title": "Open Changes with Next Revision",
         "icon": {
@@ -42,6 +52,11 @@
         {
           "command": "prevNextRevision.previousRevision",
           "group": "navigation@97",
+          "when": "prevNextRevision.canNavigate"
+        },
+        {
+          "command": "prevNextRevision.showCommit",
+          "group": "navigation@98",
           "when": "prevNextRevision.canNavigate"
         },
         {

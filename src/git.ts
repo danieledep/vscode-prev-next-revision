@@ -77,6 +77,55 @@ export async function getFileAtCommit(
 }
 
 /**
+ * Get the list of files changed in a commit.
+ */
+export async function getChangedFiles(
+  filePath: string,
+  commitHash: string
+): Promise<{ status: string; file: string }[]> {
+  const cwd = getWorkspaceFolder(filePath);
+  if (!cwd) {
+    return [];
+  }
+  const output = await git(
+    cwd,
+    "diff-tree",
+    "--no-commit-id",
+    "--name-status",
+    "-r",
+    commitHash
+  );
+  if (!output) {
+    return [];
+  }
+  return output.split("\n").map((line) => {
+    const [status, ...rest] = line.split("\t");
+    return { status, file: rest.join("\t") };
+  });
+}
+
+/**
+ * Get the remote URL for the repository (for GitHub links).
+ */
+export async function getRemoteUrl(
+  filePath: string
+): Promise<string | undefined> {
+  const cwd = getWorkspaceFolder(filePath);
+  if (!cwd) {
+    return undefined;
+  }
+  try {
+    const url = await git(cwd, "remote", "get-url", "origin");
+    // Convert SSH URLs to HTTPS
+    return url
+      .replace(/^git@github\.com:/, "https://github.com/")
+      .replace(/\.git$/, "");
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Get the commit hash of the current revision being viewed in a diff,
  * parsed from a git-scheme URI.
  */
