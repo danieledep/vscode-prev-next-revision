@@ -118,7 +118,7 @@ async function openDiffWithPrevious() {
     leftUri = makeGitUri(currentFilePath, currentCommits[prevIndex + 1].hash);
   } else {
     // This is the oldest commit — diff against empty (all green)
-    leftUri = makeGitUri(currentFilePath, "0000000000000000000000000000000000000000");
+    leftUri = vscode.Uri.parse(`untitled:${currentFilePath}`);
   }
   rightUri = makeGitUri(currentFilePath, prevCommit.hash);
   currentLabel = prevCommit.hash.substring(0, 7);
