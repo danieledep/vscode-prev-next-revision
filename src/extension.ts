@@ -117,8 +117,8 @@ async function openDiffWithPrevious() {
     // There's an even older commit — left side is prevCommit's parent in our log
     leftUri = makeGitUri(currentFilePath, currentCommits[prevIndex + 1].hash);
   } else {
-    // This is the oldest commit — diff against empty
-    leftUri = makeGitUri(currentFilePath, prevCommit.hash + "~1");
+    // This is the oldest commit — diff against empty (all green)
+    leftUri = makeGitUri(currentFilePath, "0000000000000000000000000000000000000000");
   }
   rightUri = makeGitUri(currentFilePath, prevCommit.hash);
   currentLabel = prevCommit.hash.substring(0, 7);
