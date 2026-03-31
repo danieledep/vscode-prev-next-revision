@@ -1,6 +1,9 @@
 .vscode/**
 .vscode-test/**
 src/**
+.git/**
 .gitignore
 tsconfig.json
 node_modules/**
+images/icon.svg
+**/*.map

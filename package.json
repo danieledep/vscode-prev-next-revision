@@ -1,14 +1,28 @@
 {
   "name": "prev-next-revision",
   "displayName": "Previous/Next Revision",
-  "description": "Navigate between file revisions with editor title bar arrows",
+  "description": "Navigate between file revisions with editor title bar arrows — lightweight alternative to GitLens revision navigation",
   "version": "0.0.1",
   "publisher": "danieledep",
+  "license": "MIT",
+  "icon": "images/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/danieledep/vscode-prev-next-revision"
+  },
   "engines": {
     "vscode": "^1.74.0"
   },
   "categories": [
-    "Other"
+    "SCM Providers"
+  ],
+  "keywords": [
+    "git",
+    "diff",
+    "revision",
+    "history",
+    "previous",
+    "next"
   ],
   "activationEvents": [
     "onStartupFinished"
