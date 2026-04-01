@@ -110,13 +110,14 @@ async function openDiffWithPrevious() {
   let leftUri: vscode.Uri;
 
   if (prevIndex + 1 < currentCommits.length) {
-    leftUri = makeGitUri(currentFilePath, currentCommits[prevIndex + 1].hash);
+    const olderCommit = currentCommits[prevIndex + 1];
+    leftUri = makeGitUri(olderCommit.filePath, olderCommit.hash);
   } else {
-    leftUri = vscode.Uri.parse(`untitled:${currentFilePath}`);
+    leftUri = vscode.Uri.parse(`untitled:${prevCommit.filePath}`);
   }
-  const rightUri = makeGitUri(currentFilePath, prevCommit.hash);
+  const rightUri = makeGitUri(prevCommit.filePath, prevCommit.hash);
 
-  const fileName = currentFilePath.split("/").pop() || currentFilePath;
+  const fileName = prevCommit.filePath.split("/").pop() || prevCommit.filePath;
   await vscode.commands.executeCommand(
     "vscode.diff",
     leftUri,
@@ -131,11 +132,12 @@ async function openDiffWithNext() {
   }
 
   const nextIndex = currentIndex - 1;
-  const fileName = currentFilePath.split("/").pop() || currentFilePath;
   const currentCommit = currentCommits[currentIndex];
+  const fileName = currentCommit.filePath.split("/").pop() || currentCommit.filePath;
 
   if (nextIndex < 0) {
-    const leftUri = makeGitUri(currentFilePath, currentCommit.hash);
+    // Next is the working copy
+    const leftUri = makeGitUri(currentCommit.filePath, currentCommit.hash);
     const rightUri = vscode.Uri.file(currentFilePath);
     await vscode.commands.executeCommand(
       "vscode.diff",
@@ -145,8 +147,8 @@ async function openDiffWithNext() {
     );
   } else {
     const nextCommit = currentCommits[nextIndex];
-    const leftUri = makeGitUri(currentFilePath, currentCommit.hash);
-    const rightUri = makeGitUri(currentFilePath, nextCommit.hash);
+    const leftUri = makeGitUri(currentCommit.filePath, currentCommit.hash);
+    const rightUri = makeGitUri(nextCommit.filePath, nextCommit.hash);
     await vscode.commands.executeCommand(
       "vscode.diff",
       leftUri,
