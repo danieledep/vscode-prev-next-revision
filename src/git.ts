@@ -9,6 +9,7 @@ export interface CommitInfo {
   hash: string;
   subject: string;
   date: string;
+  filePath: string; // path of the file at this commit (tracks renames)
 }
 
 function getWorkspaceFolder(filePath: string): string | undefined {
@@ -38,10 +39,14 @@ export async function getFileLog(
   if (!cwd) {
     return [];
   }
+  const relativePath = path.relative(cwd, filePath).replace(/\\/g, "/");
+
+  // Use --name-status and --follow to track renames
   const output = await git(
     cwd,
     "log",
     "--follow",
+    "--name-status",
     "--format=%H%n%s%n%aI",
     "--",
     filePath
@@ -51,11 +56,42 @@ export async function getFileLog(
   }
   const lines = output.split("\n");
   const commits: CommitInfo[] = [];
-  for (let i = 0; i + 2 < lines.length; i += 3) {
+  let i = 0;
+  while (i < lines.length) {
+    // Skip empty lines
+    if (!lines[i]) {
+      i++;
+      continue;
+    }
+    const hash = lines[i];
+    const subject = lines[i + 1] || "";
+    const date = lines[i + 2] || "";
+    i += 3;
+
+    // Skip empty lines between header and name-status
+    while (i < lines.length && lines[i] === "") {
+      i++;
+    }
+
+    // Parse name-status line (e.g. "M\tfile.txt" or "R100\told.txt\tnew.txt")
+    let commitFilePath = relativePath;
+    if (i < lines.length && lines[i]) {
+      const parts = lines[i].split("\t");
+      const status = parts[0];
+      if (status.startsWith("R") && parts.length >= 3) {
+        // Rename: old path is parts[1]
+        commitFilePath = parts[1];
+      } else if (parts.length >= 2) {
+        commitFilePath = parts[1];
+      }
+      i++;
+    }
+
     commits.push({
-      hash: lines[i],
-      subject: lines[i + 1],
-      date: lines[i + 2],
+      hash,
+      subject,
+      date,
+      filePath: path.join(cwd, commitFilePath),
     });
   }
   return commits;
