@@ -6,25 +6,56 @@ import {
   getRealPath,
   getChangedFiles,
   getRemoteUrl,
+  hasUncommittedChanges,
   CommitInfo,
 } from "./git";
 
 let currentCommits: CommitInfo[] = [];
 let currentIndex = -1;
 let currentFilePath = "";
+let uncommittedChanges = false;
 
 function setContext(key: string, value: boolean) {
   vscode.commands.executeCommand("setContext", key, value);
 }
 
+/**
+ * Detect if the active tab is our "uncommitted diff" view
+ * (left = git:HEAD, right = file:working-copy).
+ */
+function isInUncommittedDiff(): boolean {
+  const tab = vscode.window.tabGroups.activeTabGroup?.activeTab;
+  if (!tab || !(tab.input instanceof vscode.TabInputTextDiff)) {
+    return false;
+  }
+  return (
+    tab.input.original.scheme === "git" &&
+    tab.input.modified.scheme === "file"
+  );
+}
+
 function updateNavigationState() {
   const hasHistory = currentCommits.length > 0;
+  const inUncommitted = isInUncommittedDiff();
 
-  const prevIndex = currentIndex === -1 ? 0 : currentIndex + 1;
-  const hasPrevious = hasHistory && prevIndex < currentCommits.length;
-  const hasNext = hasHistory && currentIndex >= 0;
-  // hasCommit: we're viewing a specific revision (not working copy)
-  const hasCommit = hasHistory && currentIndex >= 0;
+  // hasPrevious: there's an older commit to diff against
+  let hasPrevious = false;
+  if (hasHistory) {
+    if (inUncommitted) {
+      // From uncommitted diff, prev goes to commit[0] vs commit[1] (or empty)
+      hasPrevious = true;
+    } else {
+      const prevIndex = currentIndex === -1 ? 0 : currentIndex + 1;
+      hasPrevious = prevIndex < currentCommits.length;
+    }
+  }
+
+  // hasNext: we're viewing a revision (or can advance to uncommitted diff)
+  const hasNext =
+    hasHistory && (currentIndex >= 0 || (inUncommitted && false));
+
+  // hasCommit: we're viewing a specific revision (not working copy or uncommitted diff)
+  const hasCommit = hasHistory && currentIndex >= 0 && !inUncommitted;
 
   setContext("prevNextRevision.canNavigate", hasHistory);
   setContext("prevNextRevision.hasPrevious", hasPrevious);
@@ -37,6 +68,7 @@ async function updateContext(editor: vscode.TextEditor | undefined) {
     currentCommits = [];
     currentIndex = -1;
     currentFilePath = "";
+    uncommittedChanges = false;
     updateNavigationState();
     return;
   }
@@ -47,6 +79,7 @@ async function updateContext(editor: vscode.TextEditor | undefined) {
     currentCommits = [];
     currentIndex = -1;
     currentFilePath = "";
+    uncommittedChanges = false;
     updateNavigationState();
     return;
   }
@@ -59,6 +92,7 @@ async function updateContext(editor: vscode.TextEditor | undefined) {
       currentCommits = [];
       currentIndex = -1;
       currentFilePath = "";
+      uncommittedChanges = false;
       updateNavigationState();
       return;
     }
@@ -78,11 +112,19 @@ async function updateContext(editor: vscode.TextEditor | undefined) {
       currentIndex = -1;
     }
 
+    // Only check uncommitted changes when we're on the working copy
+    if (currentIndex === -1) {
+      uncommittedChanges = await hasUncommittedChanges(filePath);
+    } else {
+      uncommittedChanges = false;
+    }
+
     updateNavigationState();
   } catch {
     currentCommits = [];
     currentIndex = -1;
     currentFilePath = "";
+    uncommittedChanges = false;
     updateNavigationState();
   }
 }
@@ -99,7 +141,28 @@ async function openDiffWithPrevious() {
     return;
   }
 
-  const prevIndex = currentIndex === -1 ? 0 : currentIndex + 1;
+  const inUncommitted = isInUncommittedDiff();
+  const fileName =
+    currentFilePath.split("/").pop() || currentFilePath;
+
+  // If on plain working copy with uncommitted changes — show uncommitted diff first
+  if (currentIndex === -1 && !inUncommitted && uncommittedChanges) {
+    const head = currentCommits[0];
+    const leftUri = makeGitUri(head.filePath, head.hash);
+    const rightUri = vscode.Uri.file(currentFilePath);
+    await vscode.commands.executeCommand(
+      "vscode.diff",
+      leftUri,
+      rightUri,
+      `${fileName} (${head.hash.substring(0, 7)} ↔ Working Copy)`
+    );
+    return;
+  }
+
+  // From uncommitted diff, prev steps to commit[0] vs commit[1]
+  // From a historical commit, prev steps to one older
+  const prevIndex =
+    inUncommitted || currentIndex === -1 ? 0 : currentIndex + 1;
 
   if (prevIndex >= currentCommits.length) {
     return;
@@ -117,7 +180,6 @@ async function openDiffWithPrevious() {
   }
   const rightUri = makeGitUri(prevCommit.filePath, prevCommit.hash);
 
-  const fileName = prevCommit.filePath.split("/").pop() || prevCommit.filePath;
   await vscode.commands.executeCommand(
     "vscode.diff",
     leftUri,
@@ -136,7 +198,7 @@ async function openDiffWithNext() {
   const fileName = currentCommit.filePath.split("/").pop() || currentCommit.filePath;
 
   if (nextIndex < 0) {
-    // Next is the working copy
+    // Next is the working copy (or uncommitted diff if dirty)
     const leftUri = makeGitUri(currentCommit.filePath, currentCommit.hash);
     const rightUri = vscode.Uri.file(currentFilePath);
     await vscode.commands.executeCommand(
@@ -298,7 +360,10 @@ export function activate(context: vscode.ExtensionContext) {
       "prevNextRevision.showCommit",
       showCommit
     ),
-    vscode.window.onDidChangeActiveTextEditor(updateContext)
+    vscode.window.onDidChangeActiveTextEditor(updateContext),
+    vscode.window.tabGroups.onDidChangeTabs(() => {
+      updateContext(vscode.window.activeTextEditor);
+    })
   );
 
   updateContext(vscode.window.activeTextEditor);

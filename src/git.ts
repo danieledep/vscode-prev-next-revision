@@ -141,6 +141,24 @@ export async function getChangedFiles(
 }
 
 /**
+ * Check whether the file has uncommitted changes (staged or unstaged).
+ */
+export async function hasUncommittedChanges(
+  filePath: string
+): Promise<boolean> {
+  const cwd = getWorkspaceFolder(filePath);
+  if (!cwd) {
+    return false;
+  }
+  try {
+    const output = await git(cwd, "status", "--porcelain", "--", filePath);
+    return output.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Get the remote URL for the repository (for GitHub links).
  */
 export async function getRemoteUrl(
