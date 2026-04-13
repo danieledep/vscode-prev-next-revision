@@ -25,8 +25,11 @@ async function git(
 ): Promise<string> {
   const config = vscode.workspace.getConfiguration("git");
   const gitPath = config.get<string>("path") || "git";
-  const { stdout } = await execFileAsync(gitPath, args, { cwd });
-  return stdout.trim();
+  const { stdout } = await execFileAsync(gitPath, args, {
+    cwd,
+    maxBuffer: 100 * 1024 * 1024,
+  });
+  return stdout;
 }
 
 /**
@@ -42,15 +45,17 @@ export async function getFileLog(
   const relativePath = path.relative(cwd, filePath).replace(/\\/g, "/");
 
   // Use --name-status and --follow to track renames
-  const output = await git(
-    cwd,
-    "log",
-    "--follow",
-    "--name-status",
-    "--format=%H%n%s%n%aI",
-    "--",
-    filePath
-  );
+  const output = (
+    await git(
+      cwd,
+      "log",
+      "--follow",
+      "--name-status",
+      "--format=%H%n%s%n%aI",
+      "--",
+      filePath
+    )
+  ).trim();
   if (!output) {
     return [];
   }
@@ -128,14 +133,16 @@ export async function getChangedFiles(
   if (!cwd) {
     return [];
   }
-  const output = await git(
-    cwd,
-    "diff-tree",
-    "--no-commit-id",
-    "--name-status",
-    "-r",
-    commitHash
-  );
+  const output = (
+    await git(
+      cwd,
+      "diff-tree",
+      "--no-commit-id",
+      "--name-status",
+      "-r",
+      commitHash
+    )
+  ).trim();
   if (!output) {
     return [];
   }
@@ -157,7 +164,7 @@ export async function hasUncommittedChanges(
   }
   try {
     const output = await git(cwd, "status", "--porcelain", "--", filePath);
-    return output.length > 0;
+    return output.trim().length > 0;
   } catch {
     return false;
   }
@@ -174,7 +181,7 @@ export async function getRemoteUrl(
     return undefined;
   }
   try {
-    const url = await git(cwd, "remote", "get-url", "origin");
+    const url = (await git(cwd, "remote", "get-url", "origin")).trim();
     // Convert SSH URLs to HTTPS
     return url
       .replace(/^git@github\.com:/, "https://github.com/")
