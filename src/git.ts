@@ -98,7 +98,8 @@ export async function getFileLog(
 }
 
 /**
- * Get file content at a specific commit.
+ * Get file content at a specific commit. Returns empty string if the file
+ * didn't exist at that commit (instead of throwing).
  */
 export async function getFileAtCommit(
   filePath: string,
@@ -106,10 +107,14 @@ export async function getFileAtCommit(
 ): Promise<string> {
   const cwd = getWorkspaceFolder(filePath);
   if (!cwd) {
-    throw new Error("File is not in a workspace folder");
+    return "";
   }
   const relativePath = path.relative(cwd, filePath).replace(/\\/g, "/");
-  return git(cwd, "show", `${commitHash}:${relativePath}`);
+  try {
+    return await git(cwd, "show", `${commitHash}:${relativePath}`);
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -181,9 +186,13 @@ export async function getRemoteUrl(
 
 /**
  * Get the commit hash of the current revision being viewed in a diff,
- * parsed from a git-scheme URI.
+ * parsed from our revision URI or VS Code's built-in git-scheme URI.
  */
 export function getCommitFromUri(uri: vscode.Uri): string | undefined {
+  if (uri.scheme === "pnr-revision") {
+    const params = new URLSearchParams(uri.query);
+    return params.get("ref") || undefined;
+  }
   if (uri.scheme === "git") {
     try {
       const query = JSON.parse(uri.query);
@@ -198,9 +207,12 @@ export function getCommitFromUri(uri: vscode.Uri): string | undefined {
 }
 
 /**
- * Get the real file path from a potentially git-scheme URI.
+ * Get the real file path from a potentially revision-scheme or git-scheme URI.
  */
 export function getRealPath(uri: vscode.Uri): string {
+  if (uri.scheme === "pnr-revision") {
+    return uri.fsPath;
+  }
   if (uri.scheme === "git") {
     try {
       const query = JSON.parse(uri.query);
