@@ -25,8 +25,11 @@ async function git(
 ): Promise<string> {
   const config = vscode.workspace.getConfiguration("git");
   const gitPath = config.get<string>("path") || "git";
-  const { stdout } = await execFileAsync(gitPath, args, { cwd });
-  return stdout.trim();
+  const { stdout } = await execFileAsync(gitPath, args, {
+    cwd,
+    maxBuffer: 100 * 1024 * 1024,
+  });
+  return stdout;
 }
 
 /**
@@ -42,15 +45,17 @@ export async function getFileLog(
   const relativePath = path.relative(cwd, filePath).replace(/\\/g, "/");
 
   // Use --name-status and --follow to track renames
-  const output = await git(
-    cwd,
-    "log",
-    "--follow",
-    "--name-status",
-    "--format=%H%n%s%n%aI",
-    "--",
-    filePath
-  );
+  const output = (
+    await git(
+      cwd,
+      "log",
+      "--follow",
+      "--name-status",
+      "--format=%H%n%s%n%aI",
+      "--",
+      filePath
+    )
+  ).trim();
   if (!output) {
     return [];
   }
@@ -98,7 +103,8 @@ export async function getFileLog(
 }
 
 /**
- * Get file content at a specific commit.
+ * Get file content at a specific commit. Returns empty string if the file
+ * didn't exist at that commit (instead of throwing).
  */
 export async function getFileAtCommit(
   filePath: string,
@@ -106,10 +112,14 @@ export async function getFileAtCommit(
 ): Promise<string> {
   const cwd = getWorkspaceFolder(filePath);
   if (!cwd) {
-    throw new Error("File is not in a workspace folder");
+    return "";
   }
   const relativePath = path.relative(cwd, filePath).replace(/\\/g, "/");
-  return git(cwd, "show", `${commitHash}:${relativePath}`);
+  try {
+    return await git(cwd, "show", `${commitHash}:${relativePath}`);
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -123,14 +133,16 @@ export async function getChangedFiles(
   if (!cwd) {
     return [];
   }
-  const output = await git(
-    cwd,
-    "diff-tree",
-    "--no-commit-id",
-    "--name-status",
-    "-r",
-    commitHash
-  );
+  const output = (
+    await git(
+      cwd,
+      "diff-tree",
+      "--no-commit-id",
+      "--name-status",
+      "-r",
+      commitHash
+    )
+  ).trim();
   if (!output) {
     return [];
   }
@@ -138,6 +150,24 @@ export async function getChangedFiles(
     const [status, ...rest] = line.split("\t");
     return { status, file: rest.join("\t") };
   });
+}
+
+/**
+ * Check whether the file has uncommitted changes (staged or unstaged).
+ */
+export async function hasUncommittedChanges(
+  filePath: string
+): Promise<boolean> {
+  const cwd = getWorkspaceFolder(filePath);
+  if (!cwd) {
+    return false;
+  }
+  try {
+    const output = await git(cwd, "status", "--porcelain", "--", filePath);
+    return output.trim().length > 0;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -151,7 +181,7 @@ export async function getRemoteUrl(
     return undefined;
   }
   try {
-    const url = await git(cwd, "remote", "get-url", "origin");
+    const url = (await git(cwd, "remote", "get-url", "origin")).trim();
     // Convert SSH URLs to HTTPS
     return url
       .replace(/^git@github\.com:/, "https://github.com/")
@@ -163,9 +193,13 @@ export async function getRemoteUrl(
 
 /**
  * Get the commit hash of the current revision being viewed in a diff,
- * parsed from a git-scheme URI.
+ * parsed from our revision URI or VS Code's built-in git-scheme URI.
  */
 export function getCommitFromUri(uri: vscode.Uri): string | undefined {
+  if (uri.scheme === "pnr-revision") {
+    const params = new URLSearchParams(uri.query);
+    return params.get("ref") || undefined;
+  }
   if (uri.scheme === "git") {
     try {
       const query = JSON.parse(uri.query);
@@ -180,9 +214,12 @@ export function getCommitFromUri(uri: vscode.Uri): string | undefined {
 }
 
 /**
- * Get the real file path from a potentially git-scheme URI.
+ * Get the real file path from a potentially revision-scheme or git-scheme URI.
  */
 export function getRealPath(uri: vscode.Uri): string {
+  if (uri.scheme === "pnr-revision") {
+    return uri.fsPath;
+  }
   if (uri.scheme === "git") {
     try {
       const query = JSON.parse(uri.query);
