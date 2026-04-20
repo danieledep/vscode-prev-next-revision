@@ -18,6 +18,20 @@ let currentFilePath = "";
 let uncommittedChanges = false;
 let contextVersion = 0;
 
+// --- Empty content provider (for first-commit diffs) ---
+
+const EMPTY_SCHEME = "pnr-empty";
+
+class EmptyContentProvider implements vscode.TextDocumentContentProvider {
+  provideTextDocumentContent(): string {
+    return "";
+  }
+}
+
+function emptyUri(filePath: string): vscode.Uri {
+  return vscode.Uri.from({ scheme: EMPTY_SCHEME, path: filePath });
+}
+
 // --- URI / tab helpers ---
 
 /**
@@ -173,14 +187,12 @@ async function openDiffWithPrevious() {
   const prevCommit = currentCommits[prevIndex];
   const older = currentCommits[prevIndex + 1];
 
-  // Use git:ref URIs — the built-in git extension resolves them
-  // and inline blame works automatically in the diff editor.
   const leftUri = older
     ? toGitUri(older.filePath, older.hash)
-    : toGitUri(prevCommit.filePath, `${prevCommit.hash}~1`);
+    : emptyUri(prevCommit.filePath);
   const rightUri = toGitUri(prevCommit.filePath, prevCommit.hash);
 
-  const leftLabel = older ? shortSha(older.hash) : "∅";
+  const leftLabel = older ? shortSha(older.hash) : "\u2205";
   const leftPath = older ? older.filePath : prevCommit.filePath;
 
   await vscode.commands.executeCommand(
@@ -308,23 +320,38 @@ async function openCommitDetails(commit: CommitInfo) {
 
   const fileName = picked.label.replace(/^\$\([^)]+\)\s*/, "");
   const filePath = path.join(cwd, fileName);
+  const status = picked.description;
   const sha = shortSha(commit.hash);
 
-  const leftUri = toGitUri(filePath, `${commit.hash}~1`);
-  const rightUri = toGitUri(filePath, commit.hash);
+  let leftUri: vscode.Uri;
+  let rightUri: vscode.Uri;
+  let title: string;
 
-  await vscode.commands.executeCommand(
-    "vscode.diff",
-    leftUri,
-    rightUri,
-    diffTitle(filePath, `${sha}~1`, filePath, sha)
-  );
+  if (status === "A") {
+    leftUri = emptyUri(filePath);
+    rightUri = toGitUri(filePath, commit.hash);
+    title = diffTitle(filePath, "\u2205", filePath, sha);
+  } else if (status === "D") {
+    leftUri = toGitUri(filePath, `${commit.hash}~1`);
+    rightUri = emptyUri(filePath);
+    title = diffTitle(filePath, `${sha}~1`, filePath, sha);
+  } else {
+    leftUri = toGitUri(filePath, `${commit.hash}~1`);
+    rightUri = toGitUri(filePath, commit.hash);
+    title = diffTitle(filePath, `${sha}~1`, filePath, sha);
+  }
+
+  await vscode.commands.executeCommand("vscode.diff", leftUri, rightUri, title);
 }
 
 // --- Activation ---
 
 export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
+    vscode.workspace.registerTextDocumentContentProvider(
+      EMPTY_SCHEME,
+      new EmptyContentProvider()
+    ),
     vscode.commands.registerCommand(
       "prevNextRevision.previousRevision",
       openDiffWithPrevious
