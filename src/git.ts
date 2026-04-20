@@ -19,10 +19,7 @@ function getWorkspaceFolder(filePath: string): string | undefined {
   return folder?.uri.fsPath;
 }
 
-async function git(
-  cwd: string,
-  ...args: string[]
-): Promise<string> {
+async function git(cwd: string, ...args: string[]): Promise<string> {
   const config = vscode.workspace.getConfiguration("git");
   const gitPath = config.get<string>("path") || "git";
   const { stdout } = await execFileAsync(gitPath, args, {
@@ -34,17 +31,15 @@ async function git(
 
 /**
  * Get the list of commits that touched a file, newest first.
+ * Tracks renames via --follow and --name-status.
  */
-export async function getFileLog(
-  filePath: string
-): Promise<CommitInfo[]> {
+export async function getFileLog(filePath: string): Promise<CommitInfo[]> {
   const cwd = getWorkspaceFolder(filePath);
   if (!cwd) {
     return [];
   }
   const relativePath = path.relative(cwd, filePath).replace(/\\/g, "/");
 
-  // Use --name-status and --follow to track renames
   const output = (
     await git(
       cwd,
@@ -59,11 +54,11 @@ export async function getFileLog(
   if (!output) {
     return [];
   }
+
   const lines = output.split("\n");
   const commits: CommitInfo[] = [];
   let i = 0;
   while (i < lines.length) {
-    // Skip empty lines
     if (!lines[i]) {
       i++;
       continue;
@@ -73,18 +68,15 @@ export async function getFileLog(
     const date = lines[i + 2] || "";
     i += 3;
 
-    // Skip empty lines between header and name-status
     while (i < lines.length && lines[i] === "") {
       i++;
     }
 
-    // Parse name-status line (e.g. "M\tfile.txt" or "R100\told.txt\tnew.txt")
     let commitFilePath = relativePath;
     if (i < lines.length && lines[i]) {
       const parts = lines[i].split("\t");
       const status = parts[0];
       if (status.startsWith("R") && parts.length >= 3) {
-        // Rename: old path is parts[1]
         commitFilePath = parts[1];
       } else if (parts.length >= 2) {
         commitFilePath = parts[1];
@@ -100,26 +92,6 @@ export async function getFileLog(
     });
   }
   return commits;
-}
-
-/**
- * Get file content at a specific commit. Returns empty string if the file
- * didn't exist at that commit (instead of throwing).
- */
-export async function getFileAtCommit(
-  filePath: string,
-  commitHash: string
-): Promise<string> {
-  const cwd = getWorkspaceFolder(filePath);
-  if (!cwd) {
-    return "";
-  }
-  const relativePath = path.relative(cwd, filePath).replace(/\\/g, "/");
-  try {
-    return await git(cwd, "show", `${commitHash}:${relativePath}`);
-  } catch {
-    return "";
-  }
 }
 
 /**
@@ -152,9 +124,6 @@ export async function getChangedFiles(
   });
 }
 
-/**
- * Check whether the file has uncommitted changes (staged or unstaged).
- */
 export async function hasUncommittedChanges(
   filePath: string
 ): Promise<boolean> {
@@ -170,9 +139,6 @@ export async function hasUncommittedChanges(
   }
 }
 
-/**
- * Get the remote URL for the repository (for GitHub links).
- */
 export async function getRemoteUrl(
   filePath: string
 ): Promise<string | undefined> {
@@ -182,7 +148,6 @@ export async function getRemoteUrl(
   }
   try {
     const url = (await git(cwd, "remote", "get-url", "origin")).trim();
-    // Convert SSH URLs to HTTPS
     return url
       .replace(/^git@github\.com:/, "https://github.com/")
       .replace(/\.git$/, "");
@@ -192,34 +157,24 @@ export async function getRemoteUrl(
 }
 
 /**
- * Get the commit hash of the current revision being viewed in a diff,
- * parsed from our revision URI or VS Code's built-in git-scheme URI.
+ * Parse commit ref from a VS Code git-scheme URI.
  */
 export function getCommitFromUri(uri: vscode.Uri): string | undefined {
-  if (uri.scheme === "pnr-revision") {
-    const params = new URLSearchParams(uri.query);
-    return params.get("ref") || undefined;
+  if (uri.scheme !== "git") {
+    return undefined;
   }
-  if (uri.scheme === "git") {
-    try {
-      const query = JSON.parse(uri.query);
-      if (query.ref) {
-        return query.ref;
-      }
-    } catch {
-      // ignore
-    }
+  try {
+    const query = JSON.parse(uri.query);
+    return query.ref || undefined;
+  } catch {
+    return undefined;
   }
-  return undefined;
 }
 
 /**
- * Get the real file path from a potentially revision-scheme or git-scheme URI.
+ * Get the real file path from a git-scheme or file-scheme URI.
  */
 export function getRealPath(uri: vscode.Uri): string {
-  if (uri.scheme === "pnr-revision") {
-    return uri.fsPath;
-  }
   if (uri.scheme === "git") {
     try {
       const query = JSON.parse(uri.query);
@@ -231,59 +186,4 @@ export function getRealPath(uri: vscode.Uri): string {
     }
   }
   return uri.fsPath;
-}
-
-export interface BlameInfo {
-  hash: string;
-  author: string;
-  authorTime: number;
-  summary: string;
-}
-
-export async function getBlameForLine(
-  filePath: string,
-  line: number,
-  ref?: string
-): Promise<BlameInfo | undefined> {
-  const cwd = getWorkspaceFolder(filePath);
-  if (!cwd) {
-    return undefined;
-  }
-  const relativePath = path.relative(cwd, filePath).replace(/\\/g, "/");
-  const lineNum = line + 1; // git blame uses 1-based lines
-  try {
-    const args = [
-      "blame",
-      "--porcelain",
-      `-L${lineNum},${lineNum}`,
-    ];
-    if (ref) {
-      args.push(ref);
-    }
-    args.push("--", relativePath);
-    const output = (await git(cwd, ...args)).trim();
-    if (!output) {
-      return undefined;
-    }
-    const lines = output.split("\n");
-    const hash = lines[0].split(" ")[0];
-    if (hash === "0000000000000000000000000000000000000000") {
-      return { hash: "0000000", author: "You", authorTime: Date.now() / 1000, summary: "Uncommitted changes" };
-    }
-    let author = "";
-    let authorTime = 0;
-    let summary = "";
-    for (const l of lines) {
-      if (l.startsWith("author ")) {
-        author = l.substring(7);
-      } else if (l.startsWith("author-time ")) {
-        authorTime = parseInt(l.substring(12), 10);
-      } else if (l.startsWith("summary ")) {
-        summary = l.substring(8);
-      }
-    }
-    return { hash: hash.substring(0, 7), author, authorTime, summary };
-  } catch {
-    return undefined;
-  }
 }
