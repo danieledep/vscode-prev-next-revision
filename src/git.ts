@@ -232,3 +232,58 @@ export function getRealPath(uri: vscode.Uri): string {
   }
   return uri.fsPath;
 }
+
+export interface BlameInfo {
+  hash: string;
+  author: string;
+  authorTime: number;
+  summary: string;
+}
+
+export async function getBlameForLine(
+  filePath: string,
+  line: number,
+  ref?: string
+): Promise<BlameInfo | undefined> {
+  const cwd = getWorkspaceFolder(filePath);
+  if (!cwd) {
+    return undefined;
+  }
+  const relativePath = path.relative(cwd, filePath).replace(/\\/g, "/");
+  const lineNum = line + 1; // git blame uses 1-based lines
+  try {
+    const args = [
+      "blame",
+      "--porcelain",
+      `-L${lineNum},${lineNum}`,
+    ];
+    if (ref) {
+      args.push(ref);
+    }
+    args.push("--", relativePath);
+    const output = (await git(cwd, ...args)).trim();
+    if (!output) {
+      return undefined;
+    }
+    const lines = output.split("\n");
+    const hash = lines[0].split(" ")[0];
+    if (hash === "0000000000000000000000000000000000000000") {
+      return { hash: "0000000", author: "You", authorTime: Date.now() / 1000, summary: "Uncommitted changes" };
+    }
+    let author = "";
+    let authorTime = 0;
+    let summary = "";
+    for (const l of lines) {
+      if (l.startsWith("author ")) {
+        author = l.substring(7);
+      } else if (l.startsWith("author-time ")) {
+        authorTime = parseInt(l.substring(12), 10);
+      } else if (l.startsWith("summary ")) {
+        summary = l.substring(8);
+      }
+    }
+    return { hash: hash.substring(0, 7), author, authorTime, summary };
+  } catch {
+    return undefined;
+  }
+}

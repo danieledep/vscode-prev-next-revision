@@ -8,6 +8,7 @@ import {
   getChangedFiles,
   getRemoteUrl,
   hasUncommittedChanges,
+  getBlameForLine,
   CommitInfo,
 } from "./git";
 
@@ -17,6 +18,17 @@ let currentCommits: CommitInfo[] = [];
 let currentIndex = -1;
 let currentFilePath = "";
 let uncommittedChanges = false;
+
+const blameDecorationType = vscode.window.createTextEditorDecorationType({
+  after: {
+    color: new vscode.ThemeColor("editorCodeLens.foreground"),
+    fontStyle: "italic",
+    margin: "0 0 0 3em",
+  },
+  rangeBehavior: vscode.DecorationRangeBehavior.ClosedOpen,
+});
+
+let blameTimeout: ReturnType<typeof setTimeout> | undefined;
 
 /**
  * Text document content provider for our custom revision URIs.
@@ -356,6 +368,67 @@ async function openCommitDetails(commit: CommitInfo) {
   }
 }
 
+function formatTimeAgo(timestamp: number): string {
+  const seconds = Math.floor(Date.now() / 1000 - timestamp);
+  if (seconds < 60) { return "just now"; }
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) { return `${minutes} minute${minutes > 1 ? "s" : ""} ago`; }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) { return `${hours} hour${hours > 1 ? "s" : ""} ago`; }
+  const days = Math.floor(hours / 24);
+  if (days < 30) { return `${days} day${days > 1 ? "s" : ""} ago`; }
+  const months = Math.floor(days / 30);
+  if (months < 12) { return `${months} month${months > 1 ? "s" : ""} ago`; }
+  const years = Math.floor(months / 12);
+  return `${years} year${years > 1 ? "s" : ""} ago`;
+}
+
+async function updateBlame(editor: vscode.TextEditor | undefined) {
+  if (!editor) {
+    return;
+  }
+  const uri = editor.document.uri;
+  if (
+    uri.scheme !== "file" &&
+    uri.scheme !== "git" &&
+    uri.scheme !== REVISION_SCHEME
+  ) {
+    editor.setDecorations(blameDecorationType, []);
+    return;
+  }
+
+  const line = editor.selection.active.line;
+  if (line >= editor.document.lineCount) {
+    editor.setDecorations(blameDecorationType, []);
+    return;
+  }
+
+  const filePath = getRealPath(uri);
+  const ref = getCommitFromUri(uri);
+
+  const blame = await getBlameForLine(filePath, line, ref);
+  if (!blame) {
+    editor.setDecorations(blameDecorationType, []);
+    return;
+  }
+
+  const text = `${blame.author}, ${formatTimeAgo(blame.authorTime)} \u2022 ${blame.summary}`;
+  const range = editor.document.lineAt(line).range;
+  editor.setDecorations(blameDecorationType, [
+    {
+      range,
+      renderOptions: { after: { contentText: text } },
+    },
+  ]);
+}
+
+function scheduleBlameUpdate(editor: vscode.TextEditor | undefined) {
+  if (blameTimeout) {
+    clearTimeout(blameTimeout);
+  }
+  blameTimeout = setTimeout(() => updateBlame(editor), 150);
+}
+
 export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.workspace.registerTextDocumentContentProvider(
@@ -374,13 +447,20 @@ export function activate(context: vscode.ExtensionContext) {
       "prevNextRevision.showCommit",
       showCommit
     ),
-    vscode.window.onDidChangeActiveTextEditor(updateContext),
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      updateContext(editor);
+      scheduleBlameUpdate(editor);
+    }),
+    vscode.window.onDidChangeTextEditorSelection((e) => {
+      scheduleBlameUpdate(e.textEditor);
+    }),
     vscode.window.tabGroups.onDidChangeTabs(() => {
       updateContext(vscode.window.activeTextEditor);
     })
   );
 
   updateContext(vscode.window.activeTextEditor);
+  scheduleBlameUpdate(vscode.window.activeTextEditor);
 }
 
 export function deactivate() {}
