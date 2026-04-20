@@ -17,6 +17,7 @@ let currentIndex = -1;
 let currentFilePath = "";
 let uncommittedChanges = false;
 let contextVersion = 0;
+let hideTimeout: ReturnType<typeof setTimeout> | undefined;
 
 // --- Empty content provider (for first-commit diffs) ---
 
@@ -116,9 +117,17 @@ function updateNavigationState() {
 async function updateContext(editor: vscode.TextEditor | undefined) {
   const version = ++contextVersion;
 
+  if (hideTimeout) {
+    clearTimeout(hideTimeout);
+    hideTimeout = undefined;
+  }
+
   if (!editor || !isGitScheme(editor.document.uri.scheme)) {
-    resetState();
-    updateNavigationState();
+    hideTimeout = setTimeout(() => {
+      if (version !== contextVersion) { return; }
+      resetState();
+      updateNavigationState();
+    }, 200);
     return;
   }
 
