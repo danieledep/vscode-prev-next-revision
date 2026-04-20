@@ -2,7 +2,6 @@ import * as vscode from "vscode";
 import * as path from "path";
 import {
   getFileLog,
-  getFileAtCommit,
   getCommitFromUri,
   getRealPath,
   getChangedFiles,
@@ -11,55 +10,85 @@ import {
   CommitInfo,
 } from "./git";
 
-const REVISION_SCHEME = "pnr-revision";
+// --- State ---
 
 let currentCommits: CommitInfo[] = [];
 let currentIndex = -1;
 let currentFilePath = "";
 let uncommittedChanges = false;
+let contextVersion = 0;
 
-/**
- * Text document content provider for our custom revision URIs.
- * Runs `git show` directly — more robust than VS Code's built-in git: scheme.
- */
-class RevisionContentProvider
-  implements vscode.TextDocumentContentProvider
-{
-  async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
-    const ref = getCommitFromUri(uri);
-    if (!ref) {
-      return "";
-    }
-    return getFileAtCommit(uri.fsPath, ref);
+// --- Empty content provider (for first-commit diffs) ---
+
+const EMPTY_SCHEME = "pnr-empty";
+
+class EmptyContentProvider implements vscode.TextDocumentContentProvider {
+  provideTextDocumentContent(): string {
+    return "";
   }
 }
 
-function makeRevisionUri(filePath: string, ref: string): vscode.Uri {
+function emptyUri(filePath: string): vscode.Uri {
+  return vscode.Uri.from({ scheme: EMPTY_SCHEME, path: filePath });
+}
+
+// --- URI / tab helpers ---
+
+/**
+ * Build a VS Code built-in git-scheme URI. The built-in git extension's
+ * content provider resolves these, which gives us inline blame for free.
+ */
+function toGitUri(filePath: string, ref: string): vscode.Uri {
   return vscode.Uri.file(filePath).with({
-    scheme: REVISION_SCHEME,
-    query: `ref=${encodeURIComponent(ref)}`,
+    scheme: "git",
+    query: JSON.stringify({ path: filePath, ref }),
   });
+}
+
+function shortSha(hash: string): string {
+  return hash.substring(0, 8);
+}
+
+function basename(filePath: string): string {
+  return path.basename(filePath);
+}
+
+function diffTitle(
+  leftPath: string,
+  leftLabel: string,
+  rightPath: string,
+  rightLabel: string
+): string {
+  return `${basename(leftPath)} (${leftLabel}) \u2194 ${basename(rightPath)} (${rightLabel})`;
 }
 
 function setContext(key: string, value: boolean) {
   vscode.commands.executeCommand("setContext", key, value);
 }
 
-/**
- * Detect if the active tab is our "uncommitted diff" view
- * (left = revision, right = file:working-copy).
- */
+function isGitScheme(scheme: string): boolean {
+  return scheme === "file" || scheme === "git";
+}
+
 function isInUncommittedDiff(): boolean {
   const tab = vscode.window.tabGroups.activeTabGroup?.activeTab;
   if (!tab || !(tab.input instanceof vscode.TabInputTextDiff)) {
     return false;
   }
-  const leftScheme = tab.input.original.scheme;
   return (
-    (leftScheme === REVISION_SCHEME || leftScheme === "git") &&
+    tab.input.original.scheme === "git" &&
     tab.input.modified.scheme === "file"
   );
 }
+
+function resetState() {
+  currentCommits = [];
+  currentIndex = -1;
+  currentFilePath = "";
+  uncommittedChanges = false;
+}
+
+// --- Navigation state ---
 
 function updateNavigationState() {
   const hasHistory = currentCommits.length > 0;
@@ -75,49 +104,32 @@ function updateNavigationState() {
     }
   }
 
-  const hasNext = hasHistory && currentIndex >= 0;
-  const hasCommit = hasHistory && currentIndex >= 0 && !inUncommitted;
-
   setContext("prevNextRevision.canNavigate", hasHistory);
   setContext("prevNextRevision.hasPrevious", hasPrevious);
-  setContext("prevNextRevision.hasNext", hasNext);
-  setContext("prevNextRevision.hasCommit", hasCommit);
+  setContext("prevNextRevision.hasNext", hasHistory && currentIndex >= 0);
+  setContext(
+    "prevNextRevision.hasCommit",
+    hasHistory && currentIndex >= 0 && !inUncommitted
+  );
 }
 
 async function updateContext(editor: vscode.TextEditor | undefined) {
-  if (!editor) {
-    currentCommits = [];
-    currentIndex = -1;
-    currentFilePath = "";
-    uncommittedChanges = false;
+  const version = ++contextVersion;
+
+  if (!editor || !isGitScheme(editor.document.uri.scheme)) {
+    resetState();
     updateNavigationState();
     return;
   }
 
-  const uri = editor.document.uri;
-
-  if (
-    uri.scheme !== "file" &&
-    uri.scheme !== "git" &&
-    uri.scheme !== REVISION_SCHEME
-  ) {
-    currentCommits = [];
-    currentIndex = -1;
-    currentFilePath = "";
-    uncommittedChanges = false;
-    updateNavigationState();
-    return;
-  }
-
-  const filePath = getRealPath(uri);
+  const filePath = getRealPath(editor.document.uri);
 
   try {
     const commits = await getFileLog(filePath);
+    if (version !== contextVersion) { return; }
+
     if (commits.length === 0) {
-      currentCommits = [];
-      currentIndex = -1;
-      currentFilePath = "";
-      uncommittedChanges = false;
+      resetState();
       updateNavigationState();
       return;
     }
@@ -125,33 +137,27 @@ async function updateContext(editor: vscode.TextEditor | undefined) {
     currentCommits = commits;
     currentFilePath = filePath;
 
-    const commitHash = getCommitFromUri(uri);
-    if (commitHash) {
-      currentIndex = commits.findIndex((c) =>
-        c.hash.startsWith(commitHash)
-      );
-      if (currentIndex === -1) {
-        currentIndex = -1;
-      }
-    } else {
-      currentIndex = -1;
-    }
+    const commitHash = getCommitFromUri(editor.document.uri);
+    currentIndex = commitHash
+      ? commits.findIndex((c) => c.hash.startsWith(commitHash))
+      : -1;
 
     if (currentIndex === -1) {
       uncommittedChanges = await hasUncommittedChanges(filePath);
+      if (version !== contextVersion) { return; }
     } else {
       uncommittedChanges = false;
     }
 
     updateNavigationState();
   } catch {
-    currentCommits = [];
-    currentIndex = -1;
-    currentFilePath = "";
-    uncommittedChanges = false;
+    if (version !== contextVersion) { return; }
+    resetState();
     updateNavigationState();
   }
 }
+
+// --- Diff navigation ---
 
 async function openDiffWithPrevious() {
   if (currentCommits.length === 0) {
@@ -159,18 +165,14 @@ async function openDiffWithPrevious() {
   }
 
   const inUncommitted = isInUncommittedDiff();
-  const fileName = currentFilePath.split("/").pop() || currentFilePath;
 
-  // If on plain working copy with uncommitted changes — show uncommitted diff first
   if (currentIndex === -1 && !inUncommitted && uncommittedChanges) {
     const head = currentCommits[0];
-    const leftUri = makeRevisionUri(head.filePath, head.hash);
-    const rightUri = vscode.Uri.file(currentFilePath);
     await vscode.commands.executeCommand(
       "vscode.diff",
-      leftUri,
-      rightUri,
-      `${fileName} (${head.hash.substring(0, 7)} ↔ Working Copy)`
+      toGitUri(head.filePath, head.hash),
+      vscode.Uri.file(currentFilePath),
+      diffTitle(head.filePath, shortSha(head.hash), currentFilePath, "Working Tree")
     );
     return;
   }
@@ -183,22 +185,21 @@ async function openDiffWithPrevious() {
   }
 
   const prevCommit = currentCommits[prevIndex];
+  const older = currentCommits[prevIndex + 1];
 
-  let leftUri: vscode.Uri;
+  const leftUri = older
+    ? toGitUri(older.filePath, older.hash)
+    : emptyUri(prevCommit.filePath);
+  const rightUri = toGitUri(prevCommit.filePath, prevCommit.hash);
 
-  if (prevIndex + 1 < currentCommits.length) {
-    const olderCommit = currentCommits[prevIndex + 1];
-    leftUri = makeRevisionUri(olderCommit.filePath, olderCommit.hash);
-  } else {
-    leftUri = vscode.Uri.parse(`untitled:${prevCommit.filePath}`);
-  }
-  const rightUri = makeRevisionUri(prevCommit.filePath, prevCommit.hash);
+  const leftLabel = older ? shortSha(older.hash) : "\u2205";
+  const leftPath = older ? older.filePath : prevCommit.filePath;
 
   await vscode.commands.executeCommand(
     "vscode.diff",
     leftUri,
     rightUri,
-    `${fileName} (${prevCommit.hash.substring(0, 7)} — ${prevCommit.subject})`
+    diffTitle(leftPath, leftLabel, prevCommit.filePath, shortSha(prevCommit.hash))
   );
 }
 
@@ -207,32 +208,39 @@ async function openDiffWithNext() {
     return;
   }
 
-  const nextIndex = currentIndex - 1;
   const currentCommit = currentCommits[currentIndex];
-  const fileName =
-    currentCommit.filePath.split("/").pop() || currentCommit.filePath;
+  const nextIndex = currentIndex - 1;
 
   if (nextIndex < 0) {
-    const leftUri = makeRevisionUri(currentCommit.filePath, currentCommit.hash);
-    const rightUri = vscode.Uri.file(currentFilePath);
     await vscode.commands.executeCommand(
       "vscode.diff",
-      leftUri,
-      rightUri,
-      `${fileName} (${currentCommit.hash.substring(0, 7)} ↔ Working Copy)`
+      toGitUri(currentCommit.filePath, currentCommit.hash),
+      vscode.Uri.file(currentFilePath),
+      diffTitle(
+        currentCommit.filePath,
+        shortSha(currentCommit.hash),
+        currentFilePath,
+        "Working Tree"
+      )
     );
-  } else {
-    const nextCommit = currentCommits[nextIndex];
-    const leftUri = makeRevisionUri(currentCommit.filePath, currentCommit.hash);
-    const rightUri = makeRevisionUri(nextCommit.filePath, nextCommit.hash);
-    await vscode.commands.executeCommand(
-      "vscode.diff",
-      leftUri,
-      rightUri,
-      `${fileName} (${nextCommit.hash.substring(0, 7)} — ${nextCommit.subject})`
-    );
+    return;
   }
+
+  const nextCommit = currentCommits[nextIndex];
+  await vscode.commands.executeCommand(
+    "vscode.diff",
+    toGitUri(currentCommit.filePath, currentCommit.hash),
+    toGitUri(nextCommit.filePath, nextCommit.hash),
+    diffTitle(
+      currentCommit.filePath,
+      shortSha(currentCommit.hash),
+      nextCommit.filePath,
+      shortSha(nextCommit.hash)
+    )
+  );
 }
+
+// --- Commit info ---
 
 async function showCommit() {
   if (currentCommits.length === 0 || currentIndex < 0) {
@@ -240,31 +248,23 @@ async function showCommit() {
   }
 
   const commit = currentCommits[currentIndex];
-  const shortSha = commit.hash.substring(0, 7);
+  const sha = shortSha(commit.hash);
 
   const items: vscode.QuickPickItem[] = [
     {
-      label: `$(git-commit) ${shortSha}`,
+      label: `$(git-commit) ${sha}`,
       description: commit.subject,
       detail: commit.date,
       kind: vscode.QuickPickItemKind.Default,
     },
     { label: "", kind: vscode.QuickPickItemKind.Separator },
-    {
-      label: "$(clippy) Copy SHA",
-      description: commit.hash,
-    },
-    {
-      label: "$(globe) Open on GitHub",
-    },
-    {
-      label: "$(diff) Open Commit Details",
-      description: "Show all changed files",
-    },
+    { label: "$(clippy) Copy SHA", description: commit.hash },
+    { label: "$(globe) Open on GitHub" },
+    { label: "$(diff) Open Commit Details", description: "Show all changed files" },
   ];
 
   const picked = await vscode.window.showQuickPick(items, {
-    title: `Commit ${shortSha}`,
+    title: `Commit ${sha}`,
     placeHolder: commit.subject,
   });
 
@@ -307,17 +307,13 @@ async function openCommitDetails(commit: CommitInfo) {
         : f.status === "D"
           ? "$(diff-removed)"
           : "$(diff-modified)";
-    return {
-      label: `${icon} ${f.file}`,
-      description: f.status,
-    };
+    return { label: `${icon} ${f.file}`, description: f.status };
   });
 
   const picked = await vscode.window.showQuickPick(fileItems, {
-    title: `Changed files in ${commit.hash.substring(0, 7)}`,
+    title: `Changed files in ${shortSha(commit.hash)}`,
     placeHolder: `${files.length} file(s) changed`,
   });
-
   if (!picked) {
     return;
   }
@@ -325,42 +321,36 @@ async function openCommitDetails(commit: CommitInfo) {
   const fileName = picked.label.replace(/^\$\([^)]+\)\s*/, "");
   const filePath = path.join(cwd, fileName);
   const status = picked.description;
+  const sha = shortSha(commit.hash);
+
+  let leftUri: vscode.Uri;
+  let rightUri: vscode.Uri;
+  let title: string;
 
   if (status === "A") {
-    const leftUri = vscode.Uri.parse(`untitled:${filePath}`);
-    const rightUri = makeRevisionUri(filePath, commit.hash);
-    await vscode.commands.executeCommand(
-      "vscode.diff",
-      leftUri,
-      rightUri,
-      `${fileName} (added in ${commit.hash.substring(0, 7)})`
-    );
+    leftUri = emptyUri(filePath);
+    rightUri = toGitUri(filePath, commit.hash);
+    title = diffTitle(filePath, "\u2205", filePath, sha);
   } else if (status === "D") {
-    const leftUri = makeRevisionUri(filePath, `${commit.hash}~1`);
-    const rightUri = vscode.Uri.parse(`untitled:${filePath}`);
-    await vscode.commands.executeCommand(
-      "vscode.diff",
-      leftUri,
-      rightUri,
-      `${fileName} (deleted in ${commit.hash.substring(0, 7)})`
-    );
+    leftUri = toGitUri(filePath, `${commit.hash}~1`);
+    rightUri = emptyUri(filePath);
+    title = diffTitle(filePath, `${sha}~1`, filePath, sha);
   } else {
-    const leftUri = makeRevisionUri(filePath, `${commit.hash}~1`);
-    const rightUri = makeRevisionUri(filePath, commit.hash);
-    await vscode.commands.executeCommand(
-      "vscode.diff",
-      leftUri,
-      rightUri,
-      `${fileName} (${commit.hash.substring(0, 7)})`
-    );
+    leftUri = toGitUri(filePath, `${commit.hash}~1`);
+    rightUri = toGitUri(filePath, commit.hash);
+    title = diffTitle(filePath, `${sha}~1`, filePath, sha);
   }
+
+  await vscode.commands.executeCommand("vscode.diff", leftUri, rightUri, title);
 }
+
+// --- Activation ---
 
 export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.workspace.registerTextDocumentContentProvider(
-      REVISION_SCHEME,
-      new RevisionContentProvider()
+      EMPTY_SCHEME,
+      new EmptyContentProvider()
     ),
     vscode.commands.registerCommand(
       "prevNextRevision.previousRevision",
@@ -370,10 +360,7 @@ export function activate(context: vscode.ExtensionContext) {
       "prevNextRevision.nextRevision",
       openDiffWithNext
     ),
-    vscode.commands.registerCommand(
-      "prevNextRevision.showCommit",
-      showCommit
-    ),
+    vscode.commands.registerCommand("prevNextRevision.showCommit", showCommit),
     vscode.window.onDidChangeActiveTextEditor(updateContext),
     vscode.window.tabGroups.onDidChangeTabs(() => {
       updateContext(vscode.window.activeTextEditor);
