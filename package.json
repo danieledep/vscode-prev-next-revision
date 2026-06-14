@@ -2,7 +2,7 @@
   "name": "prev-next-revision",
   "displayName": "Previous/Next Revision",
   "description": "Navigate between file revisions with editor title bar arrows",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "publisher": "danieledep",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -11,7 +11,7 @@
     "url": "https://github.com/danieledep/vscode-prev-next-revision"
   },
   "engines": {
-    "vscode": "^1.74.0"
+    "vscode": "^1.97.0"
   },
   "categories": [
     "SCM Providers"
@@ -27,7 +27,14 @@
   "activationEvents": [
     "onStartupFinished"
   ],
-  "main": "./out/extension.js",
+  "main": "./dist/extension.cjs",
+  "files": [
+    "dist",
+    "images",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
   "contributes": {
     "commands": [
       {
@@ -82,15 +89,16 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "build": "npm run compile && npx @vscode/vsce package",
-    "publish": "npm run compile && npx @vscode/vsce publish"
+    "dev": "tsdown src/extension.ts --deps.neverBundle vscode --format cjs --watch --sourcemap",
+    "build": "tsdown src/extension.ts --deps.neverBundle vscode --format cjs",
+    "package": "vsce package --no-dependencies",
+    "vscode:prepublish": "npm run build"
   },
   "devDependencies": {
-    "@types/node": "^18.0.0",
-    "@types/vscode": "^1.74.0",
+    "@types/node": "^20.0.0",
+    "@types/vscode": "1.97.0",
+    "@vscode/vsce": "^3.9.2",
+    "tsdown": "^0.21.10",
     "typescript": "^5.3.0"
   }
 }

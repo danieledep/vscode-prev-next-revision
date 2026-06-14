@@ -12,11 +12,22 @@ export interface CommitInfo {
   filePath: string; // path of the file at this commit (tracks renames)
 }
 
-function getWorkspaceFolder(filePath: string): string | undefined {
-  const folder = vscode.workspace.getWorkspaceFolder(
-    vscode.Uri.file(filePath)
-  );
-  return folder?.uri.fsPath;
+/**
+ * Resolve the git repository root for a file. We run git from the file's own
+ * directory — not the workspace folder — so that nested repos, or a workspace
+ * folder that merely contains several independent repos, still resolve to the
+ * repo that actually tracks the file. The root is also the base git prints its
+ * relative paths against, so it's what we join those back onto.
+ */
+export async function getRepoRoot(filePath: string): Promise<string | undefined> {
+  try {
+    const root = (
+      await git(path.dirname(filePath), "rev-parse", "--show-toplevel")
+    ).trim();
+    return root || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
@@ -34,15 +45,15 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
  * Tracks renames via --follow and --name-status.
  */
 export async function getFileLog(filePath: string): Promise<CommitInfo[]> {
-  const cwd = getWorkspaceFolder(filePath);
-  if (!cwd) {
+  const root = await getRepoRoot(filePath);
+  if (!root) {
     return [];
   }
-  const relativePath = path.relative(cwd, filePath).replace(/\\/g, "/");
+  const relativePath = path.relative(root, filePath).replace(/\\/g, "/");
 
   const output = (
     await git(
-      cwd,
+      root,
       "log",
       "--follow",
       "--name-status",
@@ -77,7 +88,7 @@ export async function getFileLog(filePath: string): Promise<CommitInfo[]> {
       const parts = lines[i].split("\t");
       const status = parts[0];
       if (status.startsWith("R") && parts.length >= 3) {
-        commitFilePath = parts[1];
+        commitFilePath = parts[2];
       } else if (parts.length >= 2) {
         commitFilePath = parts[1];
       }
@@ -88,7 +99,7 @@ export async function getFileLog(filePath: string): Promise<CommitInfo[]> {
       hash,
       subject,
       date,
-      filePath: path.join(cwd, commitFilePath),
+      filePath: path.join(root, commitFilePath),
     });
   }
   return commits;
@@ -101,38 +112,40 @@ export async function getChangedFiles(
   filePath: string,
   commitHash: string
 ): Promise<{ status: string; file: string }[]> {
-  const cwd = getWorkspaceFolder(filePath);
-  if (!cwd) {
+  try {
+    const output = (
+      await git(
+        path.dirname(filePath),
+        "diff-tree",
+        "--no-commit-id",
+        "--name-status",
+        "-r",
+        commitHash
+      )
+    ).trim();
+    if (!output) {
+      return [];
+    }
+    return output.split("\n").map((line) => {
+      const [status, ...rest] = line.split("\t");
+      return { status, file: rest.join("\t") };
+    });
+  } catch {
     return [];
   }
-  const output = (
-    await git(
-      cwd,
-      "diff-tree",
-      "--no-commit-id",
-      "--name-status",
-      "-r",
-      commitHash
-    )
-  ).trim();
-  if (!output) {
-    return [];
-  }
-  return output.split("\n").map((line) => {
-    const [status, ...rest] = line.split("\t");
-    return { status, file: rest.join("\t") };
-  });
 }
 
 export async function hasUncommittedChanges(
   filePath: string
 ): Promise<boolean> {
-  const cwd = getWorkspaceFolder(filePath);
-  if (!cwd) {
-    return false;
-  }
   try {
-    const output = await git(cwd, "status", "--porcelain", "--", filePath);
+    const output = await git(
+      path.dirname(filePath),
+      "status",
+      "--porcelain",
+      "--",
+      filePath
+    );
     return output.trim().length > 0;
   } catch {
     return false;
@@ -142,15 +155,22 @@ export async function hasUncommittedChanges(
 export async function getRemoteUrl(
   filePath: string
 ): Promise<string | undefined> {
-  const cwd = getWorkspaceFolder(filePath);
-  if (!cwd) {
+  const root = await getRepoRoot(filePath);
+  if (!root) {
     return undefined;
   }
   try {
-    const url = (await git(cwd, "remote", "get-url", "origin")).trim();
-    return url
-      .replace(/^git@github\.com:/, "https://github.com/")
-      .replace(/\.git$/, "");
+    const raw = (await git(root, "remote", "get-url", "origin")).trim();
+    if (!raw) {
+      return undefined;
+    }
+    // Normalise SSH / scp-like remotes (git@host:owner/repo) and ssh:// URLs
+    // to a browsable https base, then drop the trailing .git.
+    const scp = raw.match(/^[^/@]+@([^:/]+):(.+)$/);
+    const url = scp
+      ? `https://${scp[1]}/${scp[2]}`
+      : raw.replace(/^ssh:\/\/(?:[^/@]+@)?/, "https://");
+    return url.replace(/\.git$/, "").replace(/\/+$/, "") || undefined;
   } catch {
     return undefined;
   }

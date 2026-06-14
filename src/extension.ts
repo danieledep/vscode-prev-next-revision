@@ -6,6 +6,7 @@ import {
   getRealPath,
   getChangedFiles,
   getRemoteUrl,
+  getRepoRoot,
   hasUncommittedChanges,
   CommitInfo,
 } from "./git";
@@ -268,7 +269,7 @@ async function showCommit() {
     },
     { label: "", kind: vscode.QuickPickItemKind.Separator },
     { label: "$(clippy) Copy SHA", description: commit.hash },
-    { label: "$(globe) Open on GitHub" },
+    { label: "$(globe) Open commit in browser" },
     { label: "$(diff) Open Commit Details", description: "Show all changed files" },
   ];
 
@@ -284,11 +285,13 @@ async function showCommit() {
   if (picked.label.includes("Copy SHA")) {
     await vscode.env.clipboard.writeText(commit.hash);
     vscode.window.showInformationMessage(`Copied ${commit.hash}`);
-  } else if (picked.label.includes("Open on GitHub")) {
+  } else if (picked.label.includes("in browser")) {
     const remoteUrl = await getRemoteUrl(currentFilePath);
     if (remoteUrl) {
+      // Bitbucket uses /commits/<hash>; GitHub, GitLab and Gitea use /commit/.
+      const segment = remoteUrl.includes("bitbucket.org") ? "commits" : "commit";
       await vscode.env.openExternal(
-        vscode.Uri.parse(`${remoteUrl}/commit/${commit.hash}`)
+        vscode.Uri.parse(`${remoteUrl}/${segment}/${commit.hash}`)
       );
     } else {
       vscode.window.showWarningMessage("No remote URL found.");
@@ -305,9 +308,13 @@ async function openCommitDetails(commit: CommitInfo) {
     return;
   }
 
-  const cwd =
-    vscode.workspace.getWorkspaceFolder(vscode.Uri.file(currentFilePath))
-      ?.uri.fsPath || "";
+  const root = await getRepoRoot(currentFilePath);
+  if (!root) {
+    vscode.window.showWarningMessage(
+      "Could not resolve the git repository root."
+    );
+    return;
+  }
 
   const fileItems: vscode.QuickPickItem[] = files.map((f) => {
     const icon =
@@ -328,7 +335,7 @@ async function openCommitDetails(commit: CommitInfo) {
   }
 
   const fileName = picked.label.replace(/^\$\([^)]+\)\s*/, "");
-  const filePath = path.join(cwd, fileName);
+  const filePath = path.join(root, fileName);
   const status = picked.description;
   const sha = shortSha(commit.hash);
 
