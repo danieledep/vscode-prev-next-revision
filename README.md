@@ -12,6 +12,17 @@ Navigate through a file's git history directly from the editor toolbar:
 
 Buttons are disabled at boundaries (greyed out when there's no older/newer revision).
 
+### GistPad gists
+
+The same arrows work on gists opened with [GistPad](https://marketplace.visualstudio.com/items?itemName=vsls-contrib.gistfs).
+Gists are versioned by GitHub rather than by git, so revisions come from the
+GitHub API instead of a local repository; revisions that left the current file
+untouched are skipped, so the arrows step through that file's own history.
+
+Public gists work without signing in. Secret gists (and heavy use) need a GitHub
+session — the extension reuses the one you already granted, and otherwise puts a
+sign-in badge on the Accounts menu.
+
 ## Usage
 
 1. Open any file tracked by git
@@ -23,4 +34,4 @@ Buttons are disabled at boundaries (greyed out when there's no older/newer revis
 ## Requirements
 
 - Git must be installed and available in your PATH
-- The file must be inside a git repository workspace
+- The file must be inside a git repository workspace, or be a gist opened with GistPad
