@@ -457,14 +457,6 @@ async function openCommitDetails(commit: CommitInfo) {
 
 export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
-    vscode.workspace.registerTextDocumentContentProvider(
-      EMPTY_SCHEME,
-      new EmptyContentProvider()
-    ),
-    vscode.workspace.registerTextDocumentContentProvider(
-      GIST_REVISION_SCHEME,
-      new GistRevisionContentProvider()
-    ),
     vscode.commands.registerCommand(
       "prevNextRevision.previousRevision",
       openDiffWithPrevious
@@ -479,6 +471,23 @@ export function activate(context: vscode.ExtensionContext) {
       updateContext(vscode.window.activeTextEditor);
     })
   );
+
+  // Kept out of the push above: registering a scheme throws if something else
+  // already claimed it, and that must not take the title bar buttons with it.
+  try {
+    context.subscriptions.push(
+      vscode.workspace.registerTextDocumentContentProvider(
+        EMPTY_SCHEME,
+        new EmptyContentProvider()
+      ),
+      vscode.workspace.registerTextDocumentContentProvider(
+        GIST_REVISION_SCHEME,
+        new GistRevisionContentProvider()
+      )
+    );
+  } catch (error) {
+    console.error("prev-next-revision: content provider not registered", error);
+  }
 
   updateContext(vscode.window.activeTextEditor);
 }
