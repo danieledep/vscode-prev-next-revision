@@ -10,12 +10,27 @@ import {
   hasUncommittedChanges,
   CommitInfo,
 } from "./git";
+import {
+  GIST_REVISION_SCHEME,
+  GistRevisionContentProvider,
+  findChangedRevision,
+  getGistChangedFiles,
+  getGistFileName,
+  getGistId,
+  getGistLog,
+  getGistRevisionFromUri,
+  gistFileUri,
+  gistRevisionUri,
+  isGistScheme,
+} from "./gist";
 
 // --- State ---
 
 let currentCommits: CommitInfo[] = [];
 let currentIndex = -1;
 let currentFilePath = "";
+/** Set while the active editor shows a GistPad gist, cleared for plain files. */
+let currentGistId: string | undefined;
 let uncommittedChanges = false;
 let contextVersion = 0;
 let hideTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -68,8 +83,25 @@ function setContext(key: string, value: boolean) {
   vscode.commands.executeCommand("setContext", key, value);
 }
 
-function isGitScheme(scheme: string): boolean {
-  return scheme === "file" || scheme === "git";
+function isSupportedScheme(scheme: string): boolean {
+  return scheme === "file" || scheme === "git" || isGistScheme(scheme);
+}
+
+/**
+ * A revision of `filePath`. Gists are versioned by GitHub rather than by git,
+ * so they get their own content provider instead of the built-in git: scheme.
+ */
+function revisionUri(filePath: string, hash: string): vscode.Uri {
+  return currentGistId
+    ? gistRevisionUri(currentGistId, filePath, hash)
+    : toGitUri(filePath, hash);
+}
+
+/** The live, editable document the newest revision is compared against. */
+function workingUri(): vscode.Uri {
+  return currentGistId
+    ? gistFileUri(currentGistId, currentFilePath)
+    : vscode.Uri.file(currentFilePath);
 }
 
 function isInUncommittedDiff(): boolean {
@@ -87,6 +119,7 @@ function resetState() {
   currentCommits = [];
   currentIndex = -1;
   currentFilePath = "";
+  currentGistId = undefined;
   uncommittedChanges = false;
 }
 
@@ -123,7 +156,9 @@ async function updateContext(editor: vscode.TextEditor | undefined) {
     hideTimeout = undefined;
   }
 
-  if (!editor || !isGitScheme(editor.document.uri.scheme)) {
+  const uri = editor?.document.uri;
+
+  if (!uri || !isSupportedScheme(uri.scheme)) {
     hideTimeout = setTimeout(() => {
       if (version !== contextVersion) { return; }
       resetState();
@@ -132,10 +167,13 @@ async function updateContext(editor: vscode.TextEditor | undefined) {
     return;
   }
 
-  const filePath = getRealPath(editor.document.uri);
+  const gistId = getGistId(uri);
+  const filePath = gistId ? getGistFileName(uri) : getRealPath(uri);
 
   try {
-    const commits = await getFileLog(filePath);
+    const commits = gistId
+      ? await getGistLog(gistId, filePath)
+      : await getFileLog(filePath);
     if (version !== contextVersion) { return; }
 
     if (commits.length === 0) {
@@ -146,13 +184,17 @@ async function updateContext(editor: vscode.TextEditor | undefined) {
 
     currentCommits = commits;
     currentFilePath = filePath;
+    currentGistId = gistId;
 
-    const commitHash = getCommitFromUri(editor.document.uri);
+    const commitHash = gistId
+      ? getGistRevisionFromUri(uri)
+      : getCommitFromUri(uri);
     currentIndex = commitHash
       ? commits.findIndex((c) => c.hash.startsWith(commitHash))
       : -1;
 
-    if (currentIndex === -1) {
+    // A gist has no working copy: its live file is always the newest revision.
+    if (currentIndex === -1 && !gistId) {
       uncommittedChanges = await hasUncommittedChanges(filePath);
       if (version !== contextVersion) { return; }
     } else {
@@ -169,6 +211,29 @@ async function updateContext(editor: vscode.TextEditor | undefined) {
 
 // --- Diff navigation ---
 
+/**
+ * Resolve the revision to land on when stepping from `index` (1 = older,
+ * -1 = newer). Git history is already filtered to this file, but gist
+ * revisions span the whole gist, so those need the untouched ones skipped.
+ */
+async function stepToRevision(
+  index: number,
+  direction: 1 | -1
+): Promise<number | undefined> {
+  if (index < 0) {
+    return undefined;
+  }
+  return currentGistId
+    ? findChangedRevision(
+        currentGistId,
+        currentFilePath,
+        currentCommits,
+        index,
+        direction
+      )
+    : index;
+}
+
 async function openDiffWithPrevious() {
   if (currentCommits.length === 0) {
     return;
@@ -180,17 +245,19 @@ async function openDiffWithPrevious() {
     const head = currentCommits[0];
     await vscode.commands.executeCommand(
       "vscode.diff",
-      toGitUri(head.filePath, head.hash),
-      vscode.Uri.file(currentFilePath),
+      revisionUri(head.filePath, head.hash),
+      workingUri(),
       diffTitle(head.filePath, shortSha(head.hash), currentFilePath, "Working Tree")
     );
     return;
   }
 
-  const prevIndex =
-    inUncommitted || currentIndex === -1 ? 0 : currentIndex + 1;
+  const prevIndex = await stepToRevision(
+    inUncommitted || currentIndex === -1 ? 0 : currentIndex + 1,
+    1
+  );
 
-  if (prevIndex >= currentCommits.length) {
+  if (prevIndex === undefined || prevIndex >= currentCommits.length) {
     return;
   }
 
@@ -198,9 +265,9 @@ async function openDiffWithPrevious() {
   const older = currentCommits[prevIndex + 1];
 
   const leftUri = older
-    ? toGitUri(older.filePath, older.hash)
+    ? revisionUri(older.filePath, older.hash)
     : emptyUri(prevCommit.filePath);
-  const rightUri = toGitUri(prevCommit.filePath, prevCommit.hash);
+  const rightUri = revisionUri(prevCommit.filePath, prevCommit.hash);
 
   const leftLabel = older ? shortSha(older.hash) : "\u2205";
   const leftPath = older ? older.filePath : prevCommit.filePath;
@@ -219,18 +286,18 @@ async function openDiffWithNext() {
   }
 
   const currentCommit = currentCommits[currentIndex];
-  const nextIndex = currentIndex - 1;
+  const nextIndex = await stepToRevision(currentIndex - 1, -1);
 
-  if (nextIndex < 0) {
+  if (nextIndex === undefined) {
     await vscode.commands.executeCommand(
       "vscode.diff",
-      toGitUri(currentCommit.filePath, currentCommit.hash),
-      vscode.Uri.file(currentFilePath),
+      revisionUri(currentCommit.filePath, currentCommit.hash),
+      workingUri(),
       diffTitle(
         currentCommit.filePath,
         shortSha(currentCommit.hash),
         currentFilePath,
-        "Working Tree"
+        currentGistId ? "Latest" : "Working Tree"
       )
     );
     return;
@@ -239,8 +306,8 @@ async function openDiffWithNext() {
   const nextCommit = currentCommits[nextIndex];
   await vscode.commands.executeCommand(
     "vscode.diff",
-    toGitUri(currentCommit.filePath, currentCommit.hash),
-    toGitUri(nextCommit.filePath, nextCommit.hash),
+    revisionUri(currentCommit.filePath, currentCommit.hash),
+    revisionUri(nextCommit.filePath, nextCommit.hash),
     diffTitle(
       currentCommit.filePath,
       shortSha(currentCommit.hash),
@@ -286,6 +353,12 @@ async function showCommit() {
     await vscode.env.clipboard.writeText(commit.hash);
     vscode.window.showInformationMessage(`Copied ${commit.hash}`);
   } else if (picked.label.includes("in browser")) {
+    if (currentGistId) {
+      await vscode.env.openExternal(
+        vscode.Uri.parse(`https://gist.github.com/${currentGistId}/${commit.hash}`)
+      );
+      return;
+    }
     const remoteUrl = await getRemoteUrl(currentFilePath);
     if (remoteUrl) {
       // Bitbucket uses /commits/<hash>; GitHub, GitLab and Gitea use /commit/.
@@ -302,19 +375,39 @@ async function showCommit() {
 }
 
 async function openCommitDetails(commit: CommitInfo) {
-  const files = await getChangedFiles(currentFilePath, commit.hash);
+  // The active editor may have moved on while the quick pick was open.
+  const index = currentCommits.indexOf(commit);
+  if (index === -1) {
+    return;
+  }
+
+  const files = currentGistId
+    ? await getGistChangedFiles(currentGistId, currentCommits, index)
+    : await getChangedFiles(currentFilePath, commit.hash);
   if (files.length === 0) {
     vscode.window.showInformationMessage("No changed files in this commit.");
     return;
   }
 
-  const root = await getRepoRoot(currentFilePath);
-  if (!root) {
+  const root = currentGistId ? "" : await getRepoRoot(currentFilePath);
+  if (root === undefined) {
     vscode.window.showWarningMessage(
       "Could not resolve the git repository root."
     );
     return;
   }
+
+  // Git names its own parent, while a gist revision's parent is just the next
+  // entry in the history — and the very first revision has no parent at all.
+  const parent = currentGistId ? currentCommits[index + 1] : undefined;
+  const parentRef = currentGistId ? parent?.hash : `${commit.hash}~1`;
+  const parentLabel = parentRef
+    ? currentGistId
+      ? shortSha(parentRef)
+      : `${shortSha(commit.hash)}~1`
+    : "\u2205";
+  const parentUri = (filePath: string) =>
+    parentRef ? revisionUri(filePath, parentRef) : emptyUri(filePath);
 
   const fileItems: vscode.QuickPickItem[] = files.map((f) => {
     const icon =
@@ -335,7 +428,7 @@ async function openCommitDetails(commit: CommitInfo) {
   }
 
   const fileName = picked.label.replace(/^\$\([^)]+\)\s*/, "");
-  const filePath = path.join(root, fileName);
+  const filePath = currentGistId ? fileName : path.join(root, fileName);
   const status = picked.description;
   const sha = shortSha(commit.hash);
 
@@ -345,16 +438,16 @@ async function openCommitDetails(commit: CommitInfo) {
 
   if (status === "A") {
     leftUri = emptyUri(filePath);
-    rightUri = toGitUri(filePath, commit.hash);
+    rightUri = revisionUri(filePath, commit.hash);
     title = diffTitle(filePath, "\u2205", filePath, sha);
   } else if (status === "D") {
-    leftUri = toGitUri(filePath, `${commit.hash}~1`);
+    leftUri = parentUri(filePath);
     rightUri = emptyUri(filePath);
-    title = diffTitle(filePath, `${sha}~1`, filePath, sha);
+    title = diffTitle(filePath, parentLabel, filePath, sha);
   } else {
-    leftUri = toGitUri(filePath, `${commit.hash}~1`);
-    rightUri = toGitUri(filePath, commit.hash);
-    title = diffTitle(filePath, `${sha}~1`, filePath, sha);
+    leftUri = parentUri(filePath);
+    rightUri = revisionUri(filePath, commit.hash);
+    title = diffTitle(filePath, parentLabel, filePath, sha);
   }
 
   await vscode.commands.executeCommand("vscode.diff", leftUri, rightUri, title);
@@ -364,10 +457,6 @@ async function openCommitDetails(commit: CommitInfo) {
 
 export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
-    vscode.workspace.registerTextDocumentContentProvider(
-      EMPTY_SCHEME,
-      new EmptyContentProvider()
-    ),
     vscode.commands.registerCommand(
       "prevNextRevision.previousRevision",
       openDiffWithPrevious
@@ -382,6 +471,23 @@ export function activate(context: vscode.ExtensionContext) {
       updateContext(vscode.window.activeTextEditor);
     })
   );
+
+  // Kept out of the push above: registering a scheme throws if something else
+  // already claimed it, and that must not take the title bar buttons with it.
+  try {
+    context.subscriptions.push(
+      vscode.workspace.registerTextDocumentContentProvider(
+        EMPTY_SCHEME,
+        new EmptyContentProvider()
+      ),
+      vscode.workspace.registerTextDocumentContentProvider(
+        GIST_REVISION_SCHEME,
+        new GistRevisionContentProvider()
+      )
+    );
+  } catch (error) {
+    console.error("prev-next-revision: content provider not registered", error);
+  }
 
   updateContext(vscode.window.activeTextEditor);
 }

@@ -2,7 +2,7 @@
   "name": "prev-next-revision",
   "displayName": "Previous/Next Revision",
   "description": "Navigate between file revisions with editor title bar arrows",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "publisher": "danieledep",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -91,13 +91,12 @@
   "scripts": {
     "dev": "tsdown src/extension.ts --deps.neverBundle vscode --format cjs --watch --sourcemap",
     "build": "tsdown src/extension.ts --deps.neverBundle vscode --format cjs",
-    "package": "vsce package --no-dependencies",
+    "package": "npx --yes @vscode/vsce package --no-dependencies",
     "vscode:prepublish": "npm run build"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "1.97.0",
-    "@vscode/vsce": "^3.9.2",
     "tsdown": "^0.21.10",
     "typescript": "^5.3.0"
   }
