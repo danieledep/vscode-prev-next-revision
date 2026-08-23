@@ -31,6 +31,16 @@ sign-in badge on the Accounts menu.
 4. Click the right arrow to step forward
 5. Click the commit icon to see commit details
 
+## Development
+
+`dist/` is generated and not checked in, so install first — the F5 build task
+needs the local dev dependencies, and without them the extension has no entry
+point to load:
+
+```sh
+npm install   # then F5 to launch the Extension Development Host
+```
+
 ## Requirements
 
 - Git must be installed and available in your PATH
