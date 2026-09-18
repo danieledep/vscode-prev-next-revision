@@ -19,6 +19,11 @@ Gists are versioned by GitHub rather than by git, so revisions come from the
 GitHub API instead of a local repository; revisions that left the current file
 untouched are skipped, so the arrows step through that file's own history.
 
+Renames are followed. A gist records one as a file vanishing and another
+appearing, so a renamed file is matched by identical contents — the same exact
+match git calls R100. A revision that renames *and* edits in one save can't be
+matched that way, and navigation stops there.
+
 Public gists work without signing in. Secret gists (and heavy use) need a GitHub
 session — the extension reuses the one you already granted, and otherwise puts a
 sign-in badge on the Accounts menu.
