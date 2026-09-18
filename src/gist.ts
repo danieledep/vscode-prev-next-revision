@@ -221,9 +221,49 @@ async function getContent(gistId: string, version: string, fileName: string) {
 }
 
 /**
+ * The name this file goes by at an adjacent revision. A gist has no notion of a
+ * rename — it records one as a file disappearing and another appearing — so a
+ * file that is gone from one side and new on the other, with byte-identical
+ * contents, is the same file under its other name. That is git's exact (R100)
+ * rename detection, and it costs no extra requests because both revisions are
+ * already cached.
+ */
+async function followName(
+  gistId: string,
+  revisions: CommitInfo[],
+  from: number,
+  to: number,
+  fileName: string
+): Promise<string> {
+  const target = revisions[to]
+    ? await getFiles(gistId, revisions[to].hash)
+    : undefined;
+  if (!target || fileName in target) {
+    return fileName;
+  }
+
+  const source = revisions[from]
+    ? ((await getFiles(gistId, revisions[from].hash)) ?? {})
+    : {};
+  const content = source[fileName];
+  if (content === undefined) {
+    return fileName;
+  }
+
+  const renamed = Object.keys(target).find(
+    (name) => !(name in source) && target[name] === content
+  );
+  return renamed ?? fileName;
+}
+
+/**
  * Gist revisions span the whole gist, so step over the ones that left this file
- * alone. Walking outwards stops at the revision that introduced the file, which
- * keeps the number of lookups small even for a long-lived gist.
+ * alone, following it through any rename on the way. Walking outwards stops at
+ * the revision that introduced the file, which keeps the number of lookups
+ * small even for a long-lived gist.
+ *
+ * The names resolved along the way are written back onto `revisions`, so the
+ * caller can address both the revision it lands on and the one before it.
  */
 export async function findChangedRevision(
   gistId: string,
@@ -232,14 +272,28 @@ export async function findChangedRevision(
   from: number,
   direction: 1 | -1
 ): Promise<number | undefined> {
+  // `fileName` is the name as of the revision being stepped away from, which
+  // sits one place back along `direction` (or is the live file, which matches
+  // the newest revision).
+  let name = fileName;
+  let previousIndex = from - direction;
+
   for (let i = from; i >= 0 && i < revisions.length; i += direction) {
-    const content = await getContent(gistId, revisions[i].hash, fileName);
+    name = await followName(gistId, revisions, previousIndex, i, name);
+    previousIndex = i;
+
+    const content = await getContent(gistId, revisions[i].hash, name);
+    const olderName = await followName(gistId, revisions, i, i + 1, name);
     const previous =
       i + 1 < revisions.length
-        ? await getContent(gistId, revisions[i + 1].hash, fileName)
+        ? await getContent(gistId, revisions[i + 1].hash, olderName)
         : undefined;
 
     if (content !== previous) {
+      revisions[i].filePath = name;
+      if (revisions[i + 1]) {
+        revisions[i + 1].filePath = olderName;
+      }
       return i;
     }
     if (content === undefined) {

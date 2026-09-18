@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { execFile } from "child_process";
+import * as fs from "fs";
 import { promisify } from "util";
 import * as path from "path";
 
@@ -22,12 +23,30 @@ export interface CommitInfo {
 export async function getRepoRoot(filePath: string): Promise<string | undefined> {
   try {
     const root = (
-      await git(path.dirname(filePath), "rev-parse", "--show-toplevel")
+      await git(gitCwd(filePath), "rev-parse", "--show-toplevel")
     ).trim();
     return root || undefined;
   } catch {
     return undefined;
   }
+}
+
+/**
+ * The directory to run git from: the file's own, or the nearest ancestor that
+ * still exists. A path taken from an older revision can name a directory a
+ * later commit removed — a file moved out of a folder, say — and git refuses
+ * to start in a working directory that isn't there.
+ */
+function gitCwd(filePath: string): string {
+  let dir = path.dirname(filePath);
+  while (!fs.existsSync(dir)) {
+    const parent = path.dirname(dir);
+    if (parent === dir) {
+      break;
+    }
+    dir = parent;
+  }
+  return dir;
 }
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
@@ -115,7 +134,7 @@ export async function getChangedFiles(
   try {
     const output = (
       await git(
-        path.dirname(filePath),
+        gitCwd(filePath),
         "diff-tree",
         "--no-commit-id",
         "--name-status",
@@ -140,7 +159,7 @@ export async function hasUncommittedChanges(
 ): Promise<boolean> {
   try {
     const output = await git(
-      path.dirname(filePath),
+      gitCwd(filePath),
       "status",
       "--porcelain",
       "--",

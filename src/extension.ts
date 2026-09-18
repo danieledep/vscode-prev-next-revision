@@ -104,6 +104,27 @@ function workingUri(): vscode.Uri {
     : vscode.Uri.file(currentFilePath);
 }
 
+/**
+ * The URI to read history from. A deleted file is diffed against the empty
+ * placeholder, and that placeholder is the side VS Code focuses, so follow the
+ * tab across to the real side rather than dropping the buttons.
+ */
+function historyUri(
+  editor: vscode.TextEditor | undefined
+): vscode.Uri | undefined {
+  const uri = editor?.document.uri;
+  if (!uri || uri.scheme !== EMPTY_SCHEME) {
+    return uri;
+  }
+
+  const tab = vscode.window.tabGroups.activeTabGroup?.activeTab;
+  if (tab?.input instanceof vscode.TabInputTextDiff) {
+    const { original, modified } = tab.input;
+    return original.scheme === EMPTY_SCHEME ? modified : original;
+  }
+  return uri;
+}
+
 function isInUncommittedDiff(): boolean {
   const tab = vscode.window.tabGroups.activeTabGroup?.activeTab;
   if (!tab || !(tab.input instanceof vscode.TabInputTextDiff)) {
@@ -156,7 +177,7 @@ async function updateContext(editor: vscode.TextEditor | undefined) {
     hideTimeout = undefined;
   }
 
-  const uri = editor?.document.uri;
+  const uri = historyUri(editor);
 
   if (!uri || !isSupportedScheme(uri.scheme)) {
     hideTimeout = setTimeout(() => {
