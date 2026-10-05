@@ -79,8 +79,12 @@ const RELATIVE_UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
   ["minute", 60 * 1000],
 ];
 
-/** "1 month ago", in the editor's own locale. */
-function relativeTime(iso: string): string {
+/**
+ * "1 month ago (14 August 2026 at 14:34)". Both halves follow the editor's own
+ * locale and time zone, so the same commit reads "August 14, 2026 at 2:34 PM"
+ * on a US machine.
+ */
+function describeDate(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) {
     return iso;
@@ -91,10 +95,16 @@ function relativeTime(iso: string): string {
     ([, ms]) => Math.abs(elapsed) >= ms
   ) ?? ["second", 1000];
 
-  return new Intl.RelativeTimeFormat(undefined, { numeric: "always" }).format(
-    -Math.round(elapsed / size),
-    unit
-  );
+  const relative = new Intl.RelativeTimeFormat(undefined, {
+    numeric: "always",
+  }).format(-Math.round(elapsed / size), unit);
+
+  const absolute = new Intl.DateTimeFormat(undefined, {
+    dateStyle: "long",
+    timeStyle: "short",
+  }).format(date);
+
+  return `${relative} (${absolute})`;
 }
 
 function diffTitle(
@@ -388,15 +398,12 @@ async function showCommit() {
 
   const commit = currentCommits[currentIndex];
   const sha = shortSha(commit.hash);
-  const when = relativeTime(commit.date);
+  const when = describeDate(commit.date);
   const remoteUrl = currentGistId
     ? undefined
     : await getRemoteUrl(currentFilePath);
 
   const items: CommitAction[] = [
-    // A separator isn't selectable, so the message reads as a heading for the
-    // actions rather than as a fourth one.
-    { label: commit.subject, kind: vscode.QuickPickItemKind.Separator },
     {
       label: "$(git-commit) Open commit",
       description: "All changed files",
@@ -493,7 +500,7 @@ async function openCommit(commit: CommitInfo) {
 
   await vscode.commands.executeCommand(
     "vscode.changes",
-    shortSha(commit.hash),
+    `${shortSha(commit.hash)} \u2014 ${commit.subject}`,
     resources
   );
 }

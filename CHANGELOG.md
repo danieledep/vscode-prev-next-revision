@@ -12,8 +12,8 @@
 - Rename the title bar buttons to "Previous changes", "Show commit details"
   and "Next changes"
 - Move the commit into the quick pick's title — "466d69e - danieledep, 1 month
-  ago" — so the heading carries the heavier of the two lines and no longer
-  looks selectable, with the commit message as a separator above the actions
+  ago (14 August 2026 at 14:34)" — so the heading carries the heavier weight
+  and no longer looks selectable
 - Note the host on "Open in browser", e.g. "github.com"
 
 ## 0.0.8
