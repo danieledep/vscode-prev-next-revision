@@ -9,7 +9,12 @@
   revision touched in one multi-file diff editor instead of asking which file
 - Reorder the actions to Open commit, Open in browser, Copy SHA, and shorten
   displayed SHAs to git's usual 7 characters
-- Rename the title bar buttons to "Previous changes" and "Next changes"
+- Rename the title bar buttons to "Previous changes", "Show commit details"
+  and "Next changes"
+- Move the author and date into the quick pick's title, so the heading carries
+  the heavier of the two lines and no longer looks selectable, with the commit
+  message as a separator above the actions
+- Note the host on "Open in browser", e.g. "github.com"
 
 ## 0.0.8
 

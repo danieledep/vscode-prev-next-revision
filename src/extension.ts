@@ -381,6 +381,15 @@ interface CommitAction extends vscode.QuickPickItem {
   run?: () => Promise<void>;
 }
 
+/** Just the host, so the entry reads "github.com" rather than the whole URL. */
+function remoteHost(url: string | undefined): string | undefined {
+  try {
+    return url ? new URL(url).hostname : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function showCommit() {
   if (currentCommits.length === 0 || currentIndex < 0) {
     return;
@@ -389,20 +398,24 @@ async function showCommit() {
   const commit = currentCommits[currentIndex];
   const sha = shortSha(commit.hash);
   const when = describeDate(commit.date);
+  const remoteUrl = currentGistId
+    ? undefined
+    : await getRemoteUrl(currentFilePath);
 
   const items: CommitAction[] = [
-    {
-      label: commit.author ? `${commit.author}, ${when}` : when,
-      detail: commit.subject,
-      kind: vscode.QuickPickItemKind.Default,
-    },
-    { label: "", kind: vscode.QuickPickItemKind.Separator },
+    // A separator isn't selectable, so the message reads as a heading for the
+    // actions rather than as a fourth one.
+    { label: commit.subject, kind: vscode.QuickPickItemKind.Separator },
     {
       label: "$(git-commit) Open commit",
-      description: "All changed files, side by side",
+      description: "All changed files",
       run: () => openCommit(commit),
     },
-    { label: "$(globe) Open in browser", run: () => openInBrowser(commit) },
+    {
+      label: "$(globe) Open in browser",
+      description: currentGistId ? "gist.github.com" : remoteHost(remoteUrl),
+      run: () => openInBrowser(commit, remoteUrl),
+    },
     {
       label: "$(clippy) Copy SHA",
       description: sha,
@@ -414,14 +427,16 @@ async function showCommit() {
   ];
 
   const picked = await vscode.window.showQuickPick(items, {
-    title: `Commit ${sha}`,
+    // Who and when goes in the title: it carries the heavier weight of the
+    // two lines, and nothing there invites a click.
+    title: commit.author ? `${commit.author}, ${when}` : when,
     placeHolder: "Open commit",
   });
 
   await picked?.run?.();
 }
 
-async function openInBrowser(commit: CommitInfo) {
+async function openInBrowser(commit: CommitInfo, remoteUrl: string | undefined) {
   if (currentGistId) {
     await vscode.env.openExternal(
       vscode.Uri.parse(`https://gist.github.com/${currentGistId}/${commit.hash}`)
@@ -429,7 +444,6 @@ async function openInBrowser(commit: CommitInfo) {
     return;
   }
 
-  const remoteUrl = await getRemoteUrl(currentFilePath);
   if (!remoteUrl) {
     vscode.window.showWarningMessage("No remote URL found.");
     return;

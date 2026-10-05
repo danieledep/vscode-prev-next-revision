@@ -49,7 +49,7 @@
       },
       {
         "command": "prevNextRevision.showCommit",
-        "title": "Show Revision Commit",
+        "title": "Show commit details",
         "icon": {
           "light": "images/light/icon-commit.svg",
           "dark": "images/dark/icon-commit.svg"
