@@ -79,31 +79,22 @@ const RELATIVE_UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
   ["minute", 60 * 1000],
 ];
 
-/**
- * "1 month ago (14 August 2026 at 14:34)". The absolute half follows the
- * editor's own locale and time zone, so the same commit reads
- * "August 14, 2026 at 2:34 PM" on a US machine.
- */
-function describeDate(iso: string): string {
+/** "1 month ago", in the editor's own locale. */
+function relativeTime(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) {
     return iso;
   }
 
-  const absolute = new Intl.DateTimeFormat(undefined, {
-    dateStyle: "long",
-    timeStyle: "short",
-  }).format(date);
-
-  const relative = new Intl.RelativeTimeFormat(undefined, {
-    numeric: "always",
-  });
   const elapsed = Date.now() - date.getTime();
   const [unit, size] = RELATIVE_UNITS.find(
     ([, ms]) => Math.abs(elapsed) >= ms
   ) ?? ["second", 1000];
 
-  return `${relative.format(-Math.round(elapsed / size), unit)} (${absolute})`;
+  return new Intl.RelativeTimeFormat(undefined, { numeric: "always" }).format(
+    -Math.round(elapsed / size),
+    unit
+  );
 }
 
 function diffTitle(
@@ -397,7 +388,7 @@ async function showCommit() {
 
   const commit = currentCommits[currentIndex];
   const sha = shortSha(commit.hash);
-  const when = describeDate(commit.date);
+  const when = relativeTime(commit.date);
   const remoteUrl = currentGistId
     ? undefined
     : await getRemoteUrl(currentFilePath);
@@ -427,9 +418,9 @@ async function showCommit() {
   ];
 
   const picked = await vscode.window.showQuickPick(items, {
-    // Who and when goes in the title: it carries the heavier weight of the
-    // two lines, and nothing there invites a click.
-    title: commit.author ? `${commit.author}, ${when}` : when,
+    // Which commit, by whom and when goes in the title: it carries the heavier
+    // weight of the two lines, and nothing there invites a click.
+    title: commit.author ? `${sha} - ${commit.author}, ${when}` : `${sha} - ${when}`,
     placeHolder: "Open commit",
   });
 
@@ -502,7 +493,7 @@ async function openCommit(commit: CommitInfo) {
 
   await vscode.commands.executeCommand(
     "vscode.changes",
-    `${shortSha(commit.hash)} \u2014 ${commit.subject}`,
+    shortSha(commit.hash),
     resources
   );
 }

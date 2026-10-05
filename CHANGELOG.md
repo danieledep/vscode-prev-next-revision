@@ -11,9 +11,9 @@
   displayed SHAs to git's usual 7 characters
 - Rename the title bar buttons to "Previous changes", "Show commit details"
   and "Next changes"
-- Move the author and date into the quick pick's title, so the heading carries
-  the heavier of the two lines and no longer looks selectable, with the commit
-  message as a separator above the actions
+- Move the commit into the quick pick's title — "466d69e - danieledep, 1 month
+  ago" — so the heading carries the heavier of the two lines and no longer
+  looks selectable, with the commit message as a separator above the actions
 - Note the host on "Open in browser", e.g. "github.com"
 
 ## 0.0.8
