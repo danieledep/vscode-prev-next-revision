@@ -39,7 +39,7 @@
     "commands": [
       {
         "command": "prevNextRevision.previousRevision",
-        "title": "Open Changes with Previous Revision",
+        "title": "Previous changes",
         "icon": {
           "light": "images/light/icon-prev-commit.svg",
           "dark": "images/dark/icon-prev-commit.svg"
@@ -59,7 +59,7 @@
       },
       {
         "command": "prevNextRevision.nextRevision",
-        "title": "Open Changes with Next Revision",
+        "title": "Next changes",
         "icon": {
           "light": "images/light/icon-next-commit.svg",
           "dark": "images/dark/icon-next-commit.svg"

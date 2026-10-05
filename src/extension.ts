@@ -63,7 +63,7 @@ function toGitUri(filePath: string, ref: string): vscode.Uri {
 }
 
 function shortSha(hash: string): string {
-  return hash.substring(0, 8);
+  return hash.substring(0, 7);
 }
 
 function basename(filePath: string): string {
@@ -133,11 +133,11 @@ function revisionUri(filePath: string, hash: string): vscode.Uri {
     : toGitUri(filePath, hash);
 }
 
-/** The live, editable document the newest revision is compared against. */
-function workingUri(): vscode.Uri {
+/** The live, editable document a revision is compared against. */
+function workingUri(filePath: string = currentFilePath): vscode.Uri {
   return currentGistId
-    ? gistFileUri(currentGistId, currentFilePath)
-    : vscode.Uri.file(currentFilePath);
+    ? gistFileUri(currentGistId, filePath)
+    : vscode.Uri.file(filePath);
 }
 
 /**
@@ -376,6 +376,11 @@ async function openDiffWithNext() {
 
 // --- Commit info ---
 
+/** A quick pick entry that carries the action to run when it is chosen. */
+interface CommitAction extends vscode.QuickPickItem {
+  run?: () => Promise<void>;
+}
+
 async function showCommit() {
   if (currentCommits.length === 0 || currentIndex < 0) {
     return;
@@ -383,56 +388,65 @@ async function showCommit() {
 
   const commit = currentCommits[currentIndex];
   const sha = shortSha(commit.hash);
-
   const when = describeDate(commit.date);
 
-  const items: vscode.QuickPickItem[] = [
+  const items: CommitAction[] = [
     {
       label: commit.author ? `${commit.author}, ${when}` : when,
       detail: commit.subject,
       kind: vscode.QuickPickItemKind.Default,
     },
     { label: "", kind: vscode.QuickPickItemKind.Separator },
-    { label: "$(clippy) Copy SHA", description: commit.hash },
-    { label: "$(globe) Open commit in browser" },
-    { label: "$(diff) Open Commit Details", description: "Show all changed files" },
+    {
+      label: "$(git-commit) Open commit",
+      description: "All changed files, side by side",
+      run: () => openCommit(commit),
+    },
+    { label: "$(globe) Open in browser", run: () => openInBrowser(commit) },
+    {
+      label: "$(clippy) Copy SHA",
+      description: sha,
+      run: async () => {
+        await vscode.env.clipboard.writeText(sha);
+        vscode.window.showInformationMessage(`Copied ${sha}`);
+      },
+    },
   ];
 
   const picked = await vscode.window.showQuickPick(items, {
     title: `Commit ${sha}`,
-    placeHolder: "Show Revision Commit",
+    placeHolder: "Open commit",
   });
 
-  if (!picked) {
+  await picked?.run?.();
+}
+
+async function openInBrowser(commit: CommitInfo) {
+  if (currentGistId) {
+    await vscode.env.openExternal(
+      vscode.Uri.parse(`https://gist.github.com/${currentGistId}/${commit.hash}`)
+    );
     return;
   }
 
-  if (picked.label.includes("Copy SHA")) {
-    await vscode.env.clipboard.writeText(commit.hash);
-    vscode.window.showInformationMessage(`Copied ${commit.hash}`);
-  } else if (picked.label.includes("in browser")) {
-    if (currentGistId) {
-      await vscode.env.openExternal(
-        vscode.Uri.parse(`https://gist.github.com/${currentGistId}/${commit.hash}`)
-      );
-      return;
-    }
-    const remoteUrl = await getRemoteUrl(currentFilePath);
-    if (remoteUrl) {
-      // Bitbucket uses /commits/<hash>; GitHub, GitLab and Gitea use /commit/.
-      const segment = remoteUrl.includes("bitbucket.org") ? "commits" : "commit";
-      await vscode.env.openExternal(
-        vscode.Uri.parse(`${remoteUrl}/${segment}/${commit.hash}`)
-      );
-    } else {
-      vscode.window.showWarningMessage("No remote URL found.");
-    }
-  } else if (picked.label.includes("Open Commit Details")) {
-    await openCommitDetails(commit);
+  const remoteUrl = await getRemoteUrl(currentFilePath);
+  if (!remoteUrl) {
+    vscode.window.showWarningMessage("No remote URL found.");
+    return;
   }
+
+  // Bitbucket uses /commits/<hash>; GitHub, GitLab and Gitea use /commit/.
+  const segment = remoteUrl.includes("bitbucket.org") ? "commits" : "commit";
+  await vscode.env.openExternal(
+    vscode.Uri.parse(`${remoteUrl}/${segment}/${commit.hash}`)
+  );
 }
 
-async function openCommitDetails(commit: CommitInfo) {
+/**
+ * Open every file the revision touched in one multi-file diff editor — the
+ * same view the built-in git blame hover opens a commit into.
+ */
+async function openCommit(commit: CommitInfo) {
   // The active editor may have moved on while the quick pick was open.
   const index = currentCommits.indexOf(commit);
   if (index === -1) {
@@ -459,56 +473,24 @@ async function openCommitDetails(commit: CommitInfo) {
   // entry in the history — and the very first revision has no parent at all.
   const parent = currentGistId ? currentCommits[index + 1] : undefined;
   const parentRef = currentGistId ? parent?.hash : `${commit.hash}~1`;
-  const parentLabel = parentRef
-    ? currentGistId
-      ? shortSha(parentRef)
-      : `${shortSha(commit.hash)}~1`
-    : "\u2205";
-  const parentUri = (filePath: string) =>
-    parentRef ? revisionUri(filePath, parentRef) : emptyUri(filePath);
 
-  const fileItems: vscode.QuickPickItem[] = files.map((f) => {
-    const icon =
-      f.status === "A"
-        ? "$(diff-added)"
-        : f.status === "D"
-          ? "$(diff-removed)"
-          : "$(diff-modified)";
-    return { label: `${icon} ${f.file}`, description: f.status };
+  // [resource, left, right] per file: the first URI only identifies the row.
+  const resources = files.map(({ status, file }) => {
+    const filePath = currentGistId ? file : path.join(root, file);
+    const previous =
+      parentRef && status !== "A"
+        ? revisionUri(filePath, parentRef)
+        : emptyUri(filePath);
+    const current =
+      status === "D" ? emptyUri(filePath) : revisionUri(filePath, commit.hash);
+    return [workingUri(filePath), previous, current];
   });
 
-  const picked = await vscode.window.showQuickPick(fileItems, {
-    title: `Changed files in ${shortSha(commit.hash)}`,
-    placeHolder: `${files.length} file(s) changed`,
-  });
-  if (!picked) {
-    return;
-  }
-
-  const fileName = picked.label.replace(/^\$\([^)]+\)\s*/, "");
-  const filePath = currentGistId ? fileName : path.join(root, fileName);
-  const status = picked.description;
-  const sha = shortSha(commit.hash);
-
-  let leftUri: vscode.Uri;
-  let rightUri: vscode.Uri;
-  let title: string;
-
-  if (status === "A") {
-    leftUri = emptyUri(filePath);
-    rightUri = revisionUri(filePath, commit.hash);
-    title = diffTitle(filePath, "\u2205", filePath, sha);
-  } else if (status === "D") {
-    leftUri = parentUri(filePath);
-    rightUri = emptyUri(filePath);
-    title = diffTitle(filePath, parentLabel, filePath, sha);
-  } else {
-    leftUri = parentUri(filePath);
-    rightUri = revisionUri(filePath, commit.hash);
-    title = diffTitle(filePath, parentLabel, filePath, sha);
-  }
-
-  await vscode.commands.executeCommand("vscode.diff", leftUri, rightUri, title);
+  await vscode.commands.executeCommand(
+    "vscode.changes",
+    `${shortSha(commit.hash)} \u2014 ${commit.subject}`,
+    resources
+  );
 }
 
 // --- Activation ---

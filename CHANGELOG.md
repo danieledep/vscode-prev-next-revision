@@ -5,6 +5,11 @@
 - Show Revision Commit now heads its quick pick with the author and when the
   revision landed — "danieledep, 1 month ago (14 August 2026 at 14:34)" — with
   the commit subject beneath it, in place of the short SHA and a raw timestamp
+- Replace "Open Commit Details" with "Open commit", which opens every file the
+  revision touched in one multi-file diff editor instead of asking which file
+- Reorder the actions to Open commit, Open in browser, Copy SHA, and shorten
+  displayed SHAs to git's usual 7 characters
+- Rename the title bar buttons to "Previous changes" and "Next changes"
 
 ## 0.0.8
 
