@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Show Revision Commit now heads its quick pick with the author and when the
+  revision landed — "danieledep, 1 month ago (14 August 2026 at 14:34)" — with
+  the commit subject beneath it, in place of the short SHA and a raw timestamp
+
 ## 0.0.8
 
 - Follow a gist file through a rename, matching it by identical contents since

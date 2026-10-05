@@ -10,6 +10,7 @@ export interface CommitInfo {
   hash: string;
   subject: string;
   date: string;
+  author: string;
   filePath: string; // path of the file at this commit (tracks renames)
 }
 
@@ -76,7 +77,7 @@ export async function getFileLog(filePath: string): Promise<CommitInfo[]> {
       "log",
       "--follow",
       "--name-status",
-      "--format=%H%n%s%n%aI",
+      "--format=%H%n%s%n%aI%n%an",
       "--",
       filePath
     )
@@ -96,7 +97,8 @@ export async function getFileLog(filePath: string): Promise<CommitInfo[]> {
     const hash = lines[i];
     const subject = lines[i + 1] || "";
     const date = lines[i + 2] || "";
-    i += 3;
+    const author = lines[i + 3] || "";
+    i += 4;
 
     while (i < lines.length && lines[i] === "") {
       i++;
@@ -118,6 +120,7 @@ export async function getFileLog(filePath: string): Promise<CommitInfo[]> {
       hash,
       subject,
       date,
+      author,
       filePath: path.join(root, commitFilePath),
     });
   }

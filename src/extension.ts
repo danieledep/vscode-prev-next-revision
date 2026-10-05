@@ -70,6 +70,42 @@ function basename(filePath: string): string {
   return path.basename(filePath);
 }
 
+const RELATIVE_UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
+  ["year", 365 * 24 * 60 * 60 * 1000],
+  ["month", 30 * 24 * 60 * 60 * 1000],
+  ["week", 7 * 24 * 60 * 60 * 1000],
+  ["day", 24 * 60 * 60 * 1000],
+  ["hour", 60 * 60 * 1000],
+  ["minute", 60 * 1000],
+];
+
+/**
+ * "1 month ago (14 August 2026 at 14:34)". The absolute half follows the
+ * editor's own locale and time zone, so the same commit reads
+ * "August 14, 2026 at 2:34 PM" on a US machine.
+ */
+function describeDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return iso;
+  }
+
+  const absolute = new Intl.DateTimeFormat(undefined, {
+    dateStyle: "long",
+    timeStyle: "short",
+  }).format(date);
+
+  const relative = new Intl.RelativeTimeFormat(undefined, {
+    numeric: "always",
+  });
+  const elapsed = Date.now() - date.getTime();
+  const [unit, size] = RELATIVE_UNITS.find(
+    ([, ms]) => Math.abs(elapsed) >= ms
+  ) ?? ["second", 1000];
+
+  return `${relative.format(-Math.round(elapsed / size), unit)} (${absolute})`;
+}
+
 function diffTitle(
   leftPath: string,
   leftLabel: string,
@@ -348,11 +384,12 @@ async function showCommit() {
   const commit = currentCommits[currentIndex];
   const sha = shortSha(commit.hash);
 
+  const when = describeDate(commit.date);
+
   const items: vscode.QuickPickItem[] = [
     {
-      label: `$(git-commit) ${sha}`,
-      description: commit.subject,
-      detail: commit.date,
+      label: commit.author ? `${commit.author}, ${when}` : when,
+      detail: commit.subject,
       kind: vscode.QuickPickItemKind.Default,
     },
     { label: "", kind: vscode.QuickPickItemKind.Separator },
@@ -363,7 +400,7 @@ async function showCommit() {
 
   const picked = await vscode.window.showQuickPick(items, {
     title: `Commit ${sha}`,
-    placeHolder: commit.subject,
+    placeHolder: "Show Revision Commit",
   });
 
   if (!picked) {

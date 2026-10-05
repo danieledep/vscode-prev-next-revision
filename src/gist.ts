@@ -14,6 +14,7 @@ const MAX_CACHED_REVISIONS = 100;
 interface GistRevision {
   version: string;
   committed_at: string;
+  user?: { login?: string } | null;
   change_status?: { additions?: number; deletions?: number };
 }
 
@@ -166,6 +167,8 @@ export async function getGistLog(
       hash: revision.version,
       subject: `Revision ${revisions.length - index} (+${additions} \u2212${deletions})`,
       date: revision.committed_at,
+      // Anonymous gists carry no user.
+      author: revision.user?.login ?? "",
       filePath: fileName,
     };
   });
