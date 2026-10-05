@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import * as path from "path";
 import {
+  ChangedFile,
   getFileLog,
   getCommitFromUri,
   getRealPath,
@@ -382,13 +383,27 @@ interface CommitAction extends vscode.QuickPickItem {
   run?: () => Promise<void>;
 }
 
-/** Just the host, so the entry reads "github.com" rather than the whole URL. */
-function remoteHost(url: string | undefined): string | undefined {
-  try {
-    return url ? new URL(url).hostname : undefined;
-  } catch {
+/** The page "Open in browser" opens, so the entry can show where it goes. */
+function commitUrl(
+  commit: CommitInfo,
+  remoteUrl: string | undefined
+): string | undefined {
+  if (currentGistId) {
+    return `https://gist.github.com/${currentGistId}/${commit.hash}`;
+  }
+  if (!remoteUrl) {
     return undefined;
   }
+  // Bitbucket uses /commits/<hash>; GitHub, GitLab and Gitea use /commit/.
+  const segment = remoteUrl.includes("bitbucket.org") ? "commits" : "commit";
+  return `${remoteUrl}/${segment}/${commit.hash}`;
+}
+
+function describeCount(files: ChangedFile[]): string {
+  if (files.length === 0) {
+    return "No files";
+  }
+  return files.length === 1 ? "1 file" : `${files.length} files`;
 }
 
 async function showCommit() {
@@ -399,20 +414,32 @@ async function showCommit() {
   const commit = currentCommits[currentIndex];
   const sha = shortSha(commit.hash);
   const when = describeDate(commit.date);
-  const remoteUrl = currentGistId
-    ? undefined
-    : await getRemoteUrl(currentFilePath);
+  // Both are needed to label the entries, so they are read once here and
+  // handed to the actions rather than looked up again after the pick.
+  const url = commitUrl(
+    commit,
+    currentGistId ? undefined : await getRemoteUrl(currentFilePath)
+  );
+  const files = currentGistId
+    ? await getGistChangedFiles(currentGistId, currentCommits, currentIndex)
+    : await getChangedFiles(currentFilePath, commit.hash);
 
   const items: CommitAction[] = [
     {
       label: "$(git-commit) Open commit",
-      description: "All changed files",
-      run: () => openCommit(commit),
+      description: describeCount(files),
+      run: () => openCommit(commit, files),
     },
     {
       label: "$(globe) Open in browser",
-      description: currentGistId ? "gist.github.com" : remoteHost(remoteUrl),
-      run: () => openInBrowser(commit, remoteUrl),
+      description: url,
+      run: async () => {
+        if (!url) {
+          vscode.window.showWarningMessage("No remote URL found.");
+          return;
+        }
+        await vscode.env.openExternal(vscode.Uri.parse(url));
+      },
     },
     {
       label: "$(clippy) Copy SHA",
@@ -434,40 +461,17 @@ async function showCommit() {
   await picked?.run?.();
 }
 
-async function openInBrowser(commit: CommitInfo, remoteUrl: string | undefined) {
-  if (currentGistId) {
-    await vscode.env.openExternal(
-      vscode.Uri.parse(`https://gist.github.com/${currentGistId}/${commit.hash}`)
-    );
-    return;
-  }
-
-  if (!remoteUrl) {
-    vscode.window.showWarningMessage("No remote URL found.");
-    return;
-  }
-
-  // Bitbucket uses /commits/<hash>; GitHub, GitLab and Gitea use /commit/.
-  const segment = remoteUrl.includes("bitbucket.org") ? "commits" : "commit";
-  await vscode.env.openExternal(
-    vscode.Uri.parse(`${remoteUrl}/${segment}/${commit.hash}`)
-  );
-}
-
 /**
  * Open every file the revision touched in one multi-file diff editor — the
  * same view the built-in git blame hover opens a commit into.
  */
-async function openCommit(commit: CommitInfo) {
+async function openCommit(commit: CommitInfo, files: ChangedFile[]) {
   // The active editor may have moved on while the quick pick was open.
   const index = currentCommits.indexOf(commit);
   if (index === -1) {
     return;
   }
 
-  const files = currentGistId
-    ? await getGistChangedFiles(currentGistId, currentCommits, index)
-    : await getChangedFiles(currentFilePath, commit.hash);
   if (files.length === 0) {
     vscode.window.showInformationMessage("No changed files in this commit.");
     return;

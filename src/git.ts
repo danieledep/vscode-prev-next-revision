@@ -6,6 +6,11 @@ import * as path from "path";
 
 const execFileAsync = promisify(execFile);
 
+export interface ChangedFile {
+  status: string;
+  file: string;
+}
+
 export interface CommitInfo {
   hash: string;
   subject: string;
@@ -133,7 +138,7 @@ export async function getFileLog(filePath: string): Promise<CommitInfo[]> {
 export async function getChangedFiles(
   filePath: string,
   commitHash: string
-): Promise<{ status: string; file: string }[]> {
+): Promise<ChangedFile[]> {
   try {
     const output = (
       await git(
@@ -142,6 +147,9 @@ export async function getChangedFiles(
         "--no-commit-id",
         "--name-status",
         "-r",
+        // Without --root the very first commit has nothing to be compared
+        // against and reports no files at all, rather than its own.
+        "--root",
         commitHash
       )
     ).trim();

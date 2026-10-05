@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { CommitInfo } from "./git";
+import { ChangedFile, CommitInfo } from "./git";
 
 /** GistPad's virtual file system scheme (vsls-contrib.gistfs). */
 const GISTPAD_SCHEME = "gist";
@@ -311,7 +311,7 @@ export async function getGistChangedFiles(
   gistId: string,
   revisions: CommitInfo[],
   index: number
-): Promise<{ status: string; file: string }[]> {
+): Promise<ChangedFile[]> {
   const current = (await getFiles(gistId, revisions[index].hash)) ?? {};
   const previous = revisions[index + 1]
     ? ((await getFiles(gistId, revisions[index + 1].hash)) ?? {})
@@ -331,7 +331,7 @@ export async function getGistChangedFiles(
         ? undefined
         : { status: "M", file };
     })
-    .filter((entry): entry is { status: string; file: string } => !!entry);
+    .filter((entry): entry is ChangedFile => !!entry);
 }
 
 // --- Content provider ---

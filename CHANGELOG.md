@@ -14,7 +14,9 @@
 - Move the commit into the quick pick's title — "466d69e - danieledep, 1 month
   ago (14 August 2026 at 14:34)" — so the heading carries the heavier weight
   and no longer looks selectable
-- Note the host on "Open in browser", e.g. "github.com"
+- Say how many files a revision touched on "Open commit", and show the URL
+  "Open in browser" will open
+- Fix the first commit in a repository reporting no changed files
 
 ## 0.0.8
 
