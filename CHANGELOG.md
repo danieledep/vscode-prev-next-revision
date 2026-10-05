@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.9
 
 - Show Revision Commit now heads its quick pick with the author and when the
   revision landed — "danieledep, 1 month ago (14 August 2026 at 14:34)" — with
@@ -14,7 +14,7 @@
 - Move the commit into the quick pick's title — "466d69e - danieledep, 1 month
   ago (14 August 2026 at 14:34)" — so the heading carries the heavier weight
   and no longer looks selectable
-- Say how many files a revision touched on "Open commit", and show the URL
+- Say how many files a revision touched on "Open commit", and name the host
   "Open in browser" will open
 - Fix the first commit in a repository reporting no changed files
 

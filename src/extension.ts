@@ -399,6 +399,15 @@ function commitUrl(
   return `${remoteUrl}/${segment}/${commit.hash}`;
 }
 
+/** Just the host, so the entry reads "github.com" rather than the whole URL. */
+function hostOf(url: string | undefined): string | undefined {
+  try {
+    return url ? new URL(url).hostname : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function describeCount(files: ChangedFile[]): string {
   if (files.length === 0) {
     return "No files";
@@ -432,7 +441,7 @@ async function showCommit() {
     },
     {
       label: "$(globe) Open in browser",
-      description: url,
+      description: hostOf(url),
       run: async () => {
         if (!url) {
           vscode.window.showWarningMessage("No remote URL found.");
